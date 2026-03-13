@@ -70,7 +70,6 @@ o_py_library(
     deps = [
         "//common/python/starlarkish/evaluator:evaluator_lib",
         "//mlody:mlody_lib",
-        "//mlody/common:context_lib",
         "@pip//rich",
     ],
 )

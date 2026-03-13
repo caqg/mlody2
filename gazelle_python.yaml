@@ -62,8 +62,8 @@ manifest:
     rassumfrassum: rassumfrassum
     requests: requests
     rich: rich
-    smmap: smmap
     shellingham: shellingham
+    smmap: smmap
     tqdm: tqdm
     tree_sitter: tree_sitter
     tree_sitter_starlark: tree_sitter_starlark
