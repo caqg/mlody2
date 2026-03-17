@@ -30,12 +30,20 @@ load("//mlody/core/builtins.mlody", "root")
 root(name="lexica", path="//mlody/teams/lexica", description="text ML team")
 """
 
+TYPES_MLODY = """\
+builtins.register("type", struct(
+    kind="type", type="mlody-workspace", name="mlody-workspace",
+    attributes={}, _allowed_attrs={},
+))
+"""
+
 
 @pytest.fixture()
 def project(fs: FakeFilesystem) -> Path:
     """Set up a fake project with roots and team files."""
     fs.create_file(str(ROOT / "mlody/core/builtins.mlody"), contents=BUILTINS_MLODY)
     fs.create_file(str(ROOT / "mlody/roots.mlody"), contents=ROOTS_MLODY)
+    fs.create_file(str(ROOT / "mlody/common/types.mlody"), contents=TYPES_MLODY)
     fs.create_file(
         str(ROOT / "mlody/teams/lexica/models.mlody"),
         contents='builtins.register("root", struct(name="bert", lr=0.001))',
@@ -169,7 +177,7 @@ class TestResolve:
         ws = Workspace(monorepo_root=project)
         ws.load()
 
-        result = ws.resolve("@bert//:lr")
+        result = ws.resolve("@bert//models:lr")
         assert result == 0.001
 
     def test_resolve_target_address(self, project: Path) -> None:
@@ -185,14 +193,51 @@ class TestResolve:
         ws.load()
 
         with pytest.raises(KeyError, match="NONEXISTENT"):
-            ws.resolve("@NONEXISTENT//:x")
+            ws.resolve("@NONEXISTENT//pkg:x")
 
     def test_resolve_error_propagation_missing_field(self, project: Path) -> None:
         ws = Workspace(monorepo_root=project)
         ws.load()
 
         with pytest.raises(AttributeError):
-            ws.resolve("@bert//:lr.nonexistent_field")
+            ws.resolve("@bert//models:lr.nonexistent_field")
+
+    def test_resolve_workspace_attr_returns_value_struct(self, project: Path) -> None:
+        from common.python.starlarkish.core.struct import Struct
+
+        ws = Workspace(monorepo_root=project)
+        ws.load()
+
+        result = ws.resolve("'info")
+        assert isinstance(result, Struct)
+        assert getattr(result, "kind", None) == "value"
+        assert getattr(getattr(result, "location", None), "type", None) == "virtual"
+        assert getattr(result, "label", None) == "'info"
+
+    def test_force_workspace_attr_returns_attribute(self, project: Path) -> None:
+        from mlody.core.workspace import force
+
+        ws = Workspace(monorepo_root=project)
+        ws.load()
+
+        result = force(ws.resolve("'info"))
+        assert result == ws.info
+
+    def test_force_passes_through_non_value(self, project: Path) -> None:
+        from mlody.core.workspace import force
+
+        ws = Workspace(monorepo_root=project)
+        ws.load()
+
+        plain = ws.resolve("@bert//models:lr")
+        assert force(plain) is plain
+
+    def test_force_passes_through_plain_python_object(self) -> None:
+        from mlody.core.workspace import force
+
+        assert force(3.14) == 3.14
+        assert force("hello") == "hello"
+        assert force(None) is None
 
 
 # ---------------------------------------------------------------------------

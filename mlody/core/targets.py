@@ -34,52 +34,59 @@ def parse_target(raw: str) -> TargetAddress:
         msg = "Target string is empty"
         raise ValueError(msg)
 
-    rest = raw
-    root: str | None = None
-    package_path: str | None = None
+    # TODO(mlody-label-parsing): remove :name shorthand once callers migrate
+    # to the full label grammar. The core parser does not support bare ':name'
+    # forms (no // prefix), so handle it here directly.
+    if raw.startswith(":"):
+        rest = raw[1:]
+        if "." in rest:
+            dot_idx = rest.index(".")
+            target_name = rest[:dot_idx]
+            field_path: tuple[str, ...] = tuple(rest[dot_idx + 1 :].split("."))
+        else:
+            target_name = rest
+            field_path = ()
+        if not target_name:
+            raise ValueError(f"Target name is empty in {raw!r}")
+        return TargetAddress(
+            root=None,
+            package_path=None,
+            target_name=target_name,
+            field_path=field_path,
+        )
 
-    # Extract @ROOT prefix
-    if rest.startswith("@"):
-        slash_idx = rest.find("//")
-        if slash_idx == -1:
-            msg = f"Invalid target syntax: expected '//' after root in {raw!r}"
-            raise ValueError(msg)
-        root = rest[1:slash_idx]
-        rest = rest[slash_idx:]
+    # Delegate all other forms to the canonical label parser.
+    # TODO(mlody-label-parsing): replace callers with Label directly
+    #   and delete this wrapper.
+    from mlody.core.label import parse_label as _core_parse_label  # noqa: PLC0415
+    from mlody.core.label.errors import LabelParseError as _LabelParseError  # noqa: PLC0415
 
-    # Extract //package_path
-    if rest.startswith("//"):
-        rest = rest[2:]
-        colon_idx = rest.find(":")
-        if colon_idx == -1:
-            msg = f"Invalid target syntax: missing ':' separator in {raw!r}"
-            raise ValueError(msg)
-        package_path = rest[:colon_idx]
-        rest = rest[colon_idx:]
+    try:
+        lbl = _core_parse_label(raw)
+    except _LabelParseError as exc:
+        raise ValueError(str(exc)) from exc
 
-    # Must start with ':'
-    if not rest.startswith(":"):
-        msg = f"Invalid target syntax: missing ':' separator in {raw!r}"
-        raise ValueError(msg)
+    if lbl.entity is None:
+        raise ValueError(f"Target string has no entity spec: {raw!r}")
 
-    rest = rest[1:]  # strip ':'
+    entity = lbl.entity
 
-    # Split target_name from field_path on first '.'
-    if "." in rest:
-        dot_idx = rest.index(".")
-        target_name = rest[:dot_idx]
-        field_path = tuple(rest[dot_idx + 1 :].split("."))
-    else:
-        target_name = rest
-        field_path = ()
+    if entity.name is None:
+        raise ValueError(f"Invalid target syntax: missing ':' separator in {raw!r}")
+
+    # Split entity.name on '.' to recover target_name + field_path.
+    # The core parser stores the full ':suffix' verbatim in entity.name;
+    # TargetAddress splits on '.' to separate target_name from field traversal.
+    name_parts = entity.name.split(".")
+    target_name = name_parts[0]
+    field_path = tuple(name_parts[1:])
 
     if not target_name:
-        msg = f"Target name is empty in {raw!r}"
-        raise ValueError(msg)
+        raise ValueError(f"Target name is empty in {raw!r}")
 
     return TargetAddress(
-        root=root,
-        package_path=package_path,
+        root=entity.root,
+        package_path=entity.path,
         target_name=target_name,
         field_path=field_path,
     )

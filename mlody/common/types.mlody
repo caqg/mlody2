@@ -180,3 +180,6 @@ typedef(
         "pattern": attr(type="string", mandatory=False),
     },
 )
+
+# ---- mlody built-in types ----
+typedef(name="mlody-workspace", description="A snapshot of an mlody workspace.")

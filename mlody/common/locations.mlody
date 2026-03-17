@@ -135,3 +135,10 @@ location(
     },
 )
 
+location(
+    name = "virtual",
+    attrs = {
+        "materializer": attr(type="callable", mandatory=True),
+    },
+)
+

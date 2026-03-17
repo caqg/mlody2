@@ -1,0 +1,57 @@
+load("//build/bzl:python.bzl", "o_py_library", "o_py_test")
+
+o_py_library(
+    name = "errors_lib",
+    srcs = ["errors.py"],
+    visibility = ["//:__subpackages__"],
+)
+
+o_py_library(
+    name = "label_lib",
+    srcs = [
+        "__init__.py",
+        "errors.py",
+        "label.py",
+        "parser.py",
+    ],
+    visibility = ["//:__subpackages__"],
+)
+
+o_py_library(
+    name = "parser_lib",
+    srcs = ["parser.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":errors_lib",
+        ":label_lib",
+    ],
+)
+
+o_py_library(
+    name = "label_pkg",
+    srcs = ["__init__.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":errors_lib",
+        ":label_lib",
+        ":parser_lib",
+    ],
+)
+
+o_py_test(
+    name = "label_test",
+    srcs = ["label_test.py"],
+    deps = [
+        ":label_lib",
+        "@pip//pytest",
+    ],
+)
+
+o_py_test(
+    name = "parser_test",
+    srcs = ["parser_test.py"],
+    deps = [
+        "//mlody/core:core_lib",
+        "@pip//pytest",
+    ],
+)

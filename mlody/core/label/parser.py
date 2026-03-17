@@ -1,0 +1,329 @@
+"""Pure-syntactic parser for mlody label strings.
+
+ABNF grammar (Appendix C of REQUIREMENTS.md):
+
+    label           = [workspace_spec "|"] [entity_spec] ["'" attribute_path]
+
+    workspace_spec  = workspace_name ["[" query_body "]"]
+    workspace_name  = *VCHAR                ; everything before "|" or "[" or "'"
+
+    entity_spec     = ["@" root_name] "//" path_spec [":" entity_name]
+                      ["[" query_body "]"]
+    root_name       = 1*name_char
+    path_spec       = path_segments ["/" "..."]
+    path_segments   = path_component *("/" path_component)
+    path_component  = 1*name_char
+    entity_name     = 1*name_char
+    name_char       = ALPHA / DIGIT / "-" / "_" / "."
+
+    attribute_path  = attr_segment *("." attr_segment) ["[" query_body "]"]
+    attr_segment    = 1*name_char
+
+    query_body      = *VCHAR               ; stored verbatim, not validated
+
+Disambiguation rules (applied in this fixed order when "|" is absent):
+  1. "|" present -> left is workspace_spec, right is [entity_spec]["'"attr_path]
+  2. Starts with "//" or "@" -> workspace=None, full string is entity+attr
+  3. Otherwise -> everything before "'" (or whole string) is workspace_spec
+"""
+
+from __future__ import annotations
+
+from mlody.core.label.errors import (
+    AttributeParseError,
+    EntityParseError,
+    LabelParseError,
+    WorkspaceParseError,
+)
+from mlody.core.label.label import EntitySpec, Label
+
+
+def _strip_query(fragment: str) -> tuple[str, str | None]:
+    """Return ``(body, query_content)`` after removing a trailing ``[...]``.
+
+    Returns ``(fragment, None)`` if no ``[`` is present.  Raises ``ValueError``
+    if a ``[`` exists but has no matching ``]``.
+    """
+    bracket_pos = fragment.find("[")
+    if bracket_pos == -1:
+        return fragment, None
+    if not fragment.endswith("]"):
+        raise ValueError(f"unclosed '[' in {fragment!r}")
+    body = fragment[:bracket_pos]
+    query = fragment[bracket_pos + 1 : -1]
+    return body, query
+
+
+def _find_tick_outside_brackets(s: str) -> int:
+    """Return the index of the first ``'`` not inside ``[...]``, or -1."""
+    depth = 0
+    for i, ch in enumerate(s):
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            if depth > 0:
+                depth -= 1
+        elif ch == "'" and depth == 0:
+            return i
+    return -1
+
+
+def _parse_workspace_fragment(
+    raw: str, fragment: str
+) -> tuple[str | None, str | None]:
+    """Parse the workspace section and return ``(workspace, workspace_query)``.
+
+    An empty fragment means the workspace was omitted (e.g. ``|//foo``); both
+    fields are ``None``.  Otherwise the fragment is passed through
+    ``_strip_query`` and the remainder is the workspace name.
+    """
+    if not fragment:
+        return None, None
+    try:
+        body, query = _strip_query(fragment)
+    except ValueError as exc:
+        raise WorkspaceParseError(
+            raw,
+            str(exc),
+            workspace_fragment=fragment,
+        ) from exc
+    return body or None, query
+
+
+def _parse_entity_fragment(raw: str, fragment: str) -> tuple[EntitySpec, str | None]:
+    """Parse the entity section and return ``(EntitySpec, entity_query)``.
+
+    Raises ``EntityParseError`` for any structural violation.
+    """
+    try:
+        body, query = _strip_query(fragment)
+    except ValueError as exc:
+        raise EntityParseError(
+            raw,
+            str(exc),
+            entity_fragment=fragment,
+        ) from exc
+
+    remainder = body
+
+    # Optional @root prefix in "@root//path" form
+    root: str | None = None
+    if remainder.startswith("@"):
+        at_end = remainder.find("//")
+        if at_end == -1:
+            raise EntityParseError(
+                raw,
+                "'@root' must be followed by '//'",
+                entity_fragment=fragment,
+            )
+        root = remainder[1:at_end]
+        remainder = remainder[at_end:]
+
+    # Require //
+    if not remainder.startswith("//"):
+        raise EntityParseError(
+            raw,
+            "entity must start with '//'",
+            entity_fragment=fragment,
+        )
+    remainder = remainder[2:]  # strip leading "//"
+
+    # After stripping //, a bare "@" means the user wrote "//@root/path"
+    # instead of the correct "@root//path" form.
+    if remainder.startswith("@"):
+        raise EntityParseError(
+            raw,
+            "use '@root//path' form, not '//@root/path'",
+            entity_fragment=fragment,
+        )
+
+    # Optional :name suffix (before wildcard check)
+    name: str | None = None
+    colon_pos = remainder.find(":")
+    if colon_pos != -1:
+        name_part = remainder[colon_pos + 1 :]
+        if not name_part:
+            raise EntityParseError(
+                raw,
+                "entity name after ':' must not be empty",
+                entity_fragment=fragment,
+            )
+        name = name_part
+        remainder = remainder[:colon_pos]
+
+    # Wildcard check: path ends with /... or is just ...
+    wildcard = False
+    if remainder.endswith("/..."):
+        wildcard = True
+        remainder = remainder[:-4]  # strip "/..."
+    elif remainder == "...":
+        # //... — empty path with only wildcard is disallowed
+        raise EntityParseError(
+            raw,
+            "'//...' is not valid: path must be non-empty before wildcard",
+            entity_fragment=fragment,
+        )
+
+    path = remainder
+    if not path:
+        raise EntityParseError(
+            raw,
+            "entity path must not be empty after '//'",
+            entity_fragment=fragment,
+        )
+
+    return EntitySpec(root=root, path=path, wildcard=wildcard, name=name), query
+
+
+def _parse_attribute_fragment(
+    raw: str, fragment: str
+) -> tuple[tuple[str, ...], str | None]:
+    """Parse the attribute section and return ``(path_tuple, attribute_query)``.
+
+    Raises ``AttributeParseError`` for empty segments or unclosed brackets.
+    """
+    try:
+        body, query = _strip_query(fragment)
+    except ValueError as exc:
+        raise AttributeParseError(
+            raw,
+            str(exc),
+            attribute_fragment=fragment,
+        ) from exc
+
+    if body.endswith("."):
+        raise AttributeParseError(
+            raw,
+            "attribute path must not end with '.'",
+            attribute_fragment=fragment,
+        )
+
+    segments = body.split(".")
+    for seg in segments:
+        if not seg:
+            raise AttributeParseError(
+                raw,
+                "attribute path segments must not be empty",
+                attribute_fragment=fragment,
+            )
+
+    return tuple(segments), query
+
+
+def parse_label(raw: str) -> Label:
+    """Parse a raw label string into a structured ``Label``.
+
+    Applies the three disambiguation rules in order to determine which part of
+    the string is the workspace spec, entity spec, and attribute path.
+
+    Raises ``LabelParseError`` (or a typed subclass) on any syntax violation.
+    """
+    if not raw:
+        raise LabelParseError(raw, "label must not be empty")
+
+    # -- Rule 1: pipe present -------------------------------------------------
+    # A "|" that is not inside brackets splits workspace from entity+attr.
+    pipe_pos = -1
+    depth = 0
+    for i, ch in enumerate(raw):
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            if depth > 0:
+                depth -= 1
+        elif ch == "|" and depth == 0:
+            pipe_pos = i
+            break
+
+    if pipe_pos != -1:
+        ws_fragment = raw[:pipe_pos]
+        rest = raw[pipe_pos + 1 :]
+        workspace, workspace_query = _parse_workspace_fragment(raw, ws_fragment)
+
+        tick_pos = _find_tick_outside_brackets(rest)
+        if tick_pos != -1:
+            entity_fragment = rest[:tick_pos]
+            attr_fragment = rest[tick_pos + 1 :]
+        else:
+            entity_fragment = rest
+            attr_fragment = ""
+
+        entity: EntitySpec | None = None
+        entity_query: str | None = None
+        attribute_path: tuple[str, ...] | None = None
+        attribute_query: str | None = None
+
+        if entity_fragment:
+            entity, entity_query = _parse_entity_fragment(raw, entity_fragment)
+        if attr_fragment:
+            attribute_path, attribute_query = _parse_attribute_fragment(
+                raw, attr_fragment
+            )
+
+        if workspace is None and entity is None and attribute_path is None:
+            raise LabelParseError(raw, "label has no content")
+
+        return Label(
+            workspace=workspace,
+            workspace_query=workspace_query,
+            entity=entity,
+            entity_query=entity_query,
+            attribute_path=attribute_path,
+            attribute_query=attribute_query,
+        )
+
+    # -- Rule 2: no pipe, starts with "//" or "@" -----------------------------
+    if raw.startswith("//") or raw.startswith("@"):
+        tick_pos = _find_tick_outside_brackets(raw)
+        if tick_pos != -1:
+            entity_fragment = raw[:tick_pos]
+            attr_fragment = raw[tick_pos + 1 :]
+        else:
+            entity_fragment = raw
+            attr_fragment = ""
+
+        entity, entity_query = _parse_entity_fragment(raw, entity_fragment)
+
+        attribute_path = None
+        attribute_query = None
+        if attr_fragment:
+            attribute_path, attribute_query = _parse_attribute_fragment(
+                raw, attr_fragment
+            )
+
+        return Label(
+            workspace=None,
+            workspace_query=None,
+            entity=entity,
+            entity_query=entity_query,
+            attribute_path=attribute_path,
+            attribute_query=attribute_query,
+        )
+
+    # -- Rule 3: no pipe, no "//"/"@" -----------------------------------------
+    # Everything before the first "'" is the workspace; after is the attribute.
+    tick_pos = _find_tick_outside_brackets(raw)
+    if tick_pos != -1:
+        ws_fragment = raw[:tick_pos]
+        attr_fragment = raw[tick_pos + 1 :]
+    else:
+        ws_fragment = raw
+        attr_fragment = ""
+
+    workspace, workspace_query = _parse_workspace_fragment(raw, ws_fragment)
+
+    attribute_path = None
+    attribute_query = None
+    if attr_fragment:
+        attribute_path, attribute_query = _parse_attribute_fragment(
+            raw, attr_fragment
+        )
+
+    return Label(
+        workspace=workspace,
+        workspace_query=workspace_query,
+        entity=None,
+        entity_query=None,
+        attribute_path=attribute_path,
+        attribute_query=attribute_query,
+    )

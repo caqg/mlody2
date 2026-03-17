@@ -20,7 +20,6 @@ from mlody.resolver.errors import (
     AmbiguousRefError,
     BranchTagCollisionError,
     CorruptCacheError,
-    LabelParseError,
     NoMlodyAtCommitError,
     UnknownRefError,
 )
@@ -34,28 +33,47 @@ _DEFAULT_CACHE_SUFFIX = Path(".cache") / "mlody" / "workspaces"
 def parse_label(label: str) -> tuple[str | None, str]:
     """Split a raw label into (committoid, inner_label).
 
-    Labels starting with '@' or '//' pass through as cwd-relative (committoid
-    is None). All other labels must contain a '|' separator; the left part is
-    the committoid and the right part is the inner label (which must itself
-    start with '@' or '//').
+    Delegates to the core label parser and projects the resulting Label
+    into the (committoid, inner_label) shape expected by resolver callers.
+    Raises LabelParseError when the label has neither an entity spec nor an
+    attribute path (i.e. it cannot resolve to any value).
+
+    # TODO(mlody-label-parsing): replace callers with Label directly and delete wrapper.
     """
-    if label.startswith("@") or label.startswith("//"):
-        return (None, label)
+    from mlody.core.label import parse_label as _core_parse_label
+    from mlody.core.label.errors import LabelParseError as _LabelParseError
 
-    parts = label.split("|", maxsplit=1)
-    if len(parts) != 2:  # noqa: PLR2004
-        raise LabelParseError(
+    lbl = _core_parse_label(label)  # raises LabelParseError on bad input
+
+    committoid = lbl.workspace  # None = CWD
+
+    if lbl.entity is None and lbl.attribute_path is None:
+        raise _LabelParseError(
             label,
-            "missing '|' separator and label does not start with '@' or '//'",
+            "label has no entity spec and no attribute path — cannot resolve to a value",
         )
 
-    committoid, inner_label = parts
-    if not (inner_label.startswith("@") or inner_label.startswith("//")):
-        raise LabelParseError(
-            label,
-            f"inner label {inner_label!r} must start with '@' or '//'",
-        )
+    if lbl.entity is None:
+        # Workspace-level attribute access (e.g. "'info", "457f'info").
+        # Re-serialise the attribute portion as inner_label for workspace.resolve.
+        assert lbl.attribute_path is not None  # guaranteed by the check above
+        attr_str = ".".join(lbl.attribute_path)
+        if lbl.attribute_query:
+            attr_str += f"[{lbl.attribute_query}]"
+        return (committoid, f"'{attr_str}")
 
+    # Entity-bearing label: re-serialise inner_label from Label fields.
+    parts: list[str] = []
+    if lbl.entity.root is not None:
+        parts.append(f"@{lbl.entity.root}")
+    path = lbl.entity.path or ""
+    if lbl.entity.wildcard:
+        parts.append(f"//{path}/...")
+    else:
+        parts.append(f"//{path}")
+    if lbl.entity.name is not None:
+        parts.append(f":{lbl.entity.name}")
+    inner_label = "".join(parts)
     return (committoid, inner_label)
 
 
@@ -159,6 +177,7 @@ def resolve_workspace(
     print_fn: Callable[..., None] = print,
     git_client: GitClient | None = None,
     cache_root: Path | None = None,
+    verbose: bool = False,
 ) -> tuple[Workspace, str | None]:
     """Resolve a raw label to a ready Workspace and optional resolved SHA.
 
@@ -178,7 +197,7 @@ def resolve_workspace(
             roots_file=roots_file,
             print_fn=print_fn,
         )
-        ws.load()
+        ws.load(verbose=verbose)
         return (ws, None)
 
     client = git_client or GitClient(monorepo_root)
@@ -195,7 +214,7 @@ def resolve_workspace(
         print_fn=print_fn,
     )
     try:
-        ws.load()
+        ws.load(verbose=verbose)
     except FileNotFoundError:
         raise NoMlodyAtCommitError(committoid, full_sha) from None
     return (ws, full_sha)

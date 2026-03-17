@@ -11,7 +11,7 @@ import click
 from rich.pretty import pretty_repr
 
 from mlody.cli.main import cli
-from mlody.core.workspace import Workspace, WorkspaceLoadError
+from mlody.core.workspace import Workspace, WorkspaceLoadError, force
 from mlody.resolver import resolve_workspace
 from mlody.resolver.errors import WorkspaceResolutionError
 
@@ -24,6 +24,7 @@ def show_fn(
     monorepo_root: Path,
     roots_file: Path | None = None,
     print_fn: Callable[..., None] = print,
+    verbose: bool = False,
 ) -> object:
     """Resolve a label to a value via a fresh workspace.
 
@@ -35,9 +36,11 @@ def show_fn(
         monorepo_root=monorepo_root,
         roots_file=roots_file,
         print_fn=print_fn,
+        verbose=verbose,
     )
     _committoid, inner_label = _parse_inner(label)
-    return workspace.resolve(inner_label)
+    print_fn(pretty_repr(_parse_label_struct(label)))
+    return force(workspace.resolve(inner_label))
 
 
 def _parse_inner(label: str) -> tuple[str | None, str]:
@@ -45,6 +48,13 @@ def _parse_inner(label: str) -> tuple[str | None, str]:
     from mlody.resolver.resolver import parse_label
 
     return parse_label(label)
+
+
+def _parse_label_struct(label: str) -> object:
+    """Return the parsed Label struct for display purposes."""
+    from mlody.core.label import parse_label as _core_parse_label
+
+    return _core_parse_label(label)
 
 
 def _is_primitive(value: object) -> bool:
@@ -76,18 +86,22 @@ def show(ctx: click.Context, targets: tuple[str, ...]) -> None:
     roots: Path | None = ctx.obj.get("roots")
     has_error = False
 
+    verbose: bool = ctx.obj.get("verbose", False)
+
     for target in targets:
         try:
             workspace, resolved_sha = resolve_workspace(
                 target,
                 monorepo_root=monorepo_root,
                 roots_file=roots,
+                verbose=verbose,
             )
             if resolved_sha is not None:
                 _logger.debug("Resolved %s to %s", target.split("|")[0], resolved_sha)
 
+            click.echo(pretty_repr(_parse_label_struct(target)))
             _committoid, inner_label = _parse_inner(target)
-            value = workspace.resolve(inner_label)
+            value = force(workspace.resolve(inner_label))
         except WorkspaceLoadError as exc:
             has_error = True
             click.echo(click.style(f"Error: {exc}", fg="red"), err=True)
@@ -131,7 +145,7 @@ def _show_with_legacy_workspace(
 
     for target in targets:
         try:
-            value = workspace.resolve(target)
+            value = force(workspace.resolve(target))
         except KeyError as exc:
             has_error = True
             click.echo(click.style(f"Error: {exc}", fg="red"), err=True)

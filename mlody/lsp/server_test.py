@@ -69,7 +69,9 @@ class TestOnChangedWatchedFiles:
             on_changed_watched_files(_make_params("file:///mlody/foo.mlody"))
 
             MockWorkspace.assert_called_once_with(
-                monorepo_root=tmp_path, print_fn=_noop_print
+                monorepo_root=tmp_path,
+                print_fn=_noop_print,
+                console=server_module._null_console,
             )
             mock_workspace.load.assert_called_once()
             assert server_module._evaluator is mock_evaluator

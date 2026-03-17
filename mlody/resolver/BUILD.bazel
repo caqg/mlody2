@@ -10,9 +10,7 @@ o_py_library(
         "resolver.py",
     ],
     visibility = ["//:__subpackages__"],
-    deps = [
-        "//mlody/core:core_lib",
-    ],
+    deps = ["//mlody/core:core_lib"],
 )
 
 o_py_test(

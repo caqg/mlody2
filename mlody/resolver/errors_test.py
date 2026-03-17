@@ -21,9 +21,6 @@ from mlody.resolver.errors import (
 class TestWorkspaceResolutionErrorHierarchy:
     """Requirement: Typed exception hierarchy — all subclass WorkspaceResolutionError."""
 
-    def test_label_parse_error_is_subclass(self) -> None:
-        assert issubclass(LabelParseError, WorkspaceResolutionError)
-
     def test_unknown_ref_error_is_subclass(self) -> None:
         assert issubclass(UnknownRefError, WorkspaceResolutionError)
 
@@ -62,6 +59,10 @@ class TestLabelParseError:
         with pytest.raises(LabelParseError) as exc_info:
             raise LabelParseError("x", "reason")
         assert exc_info.value.label == "x"
+
+    def test_is_value_error_not_workspace_resolution_error(self) -> None:
+        assert issubclass(LabelParseError, ValueError)
+        assert not issubclass(LabelParseError, WorkspaceResolutionError)
 
 
 class TestUnknownRefError:

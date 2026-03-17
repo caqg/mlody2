@@ -4,18 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# Backward-compat re-export. Import from mlody.core.label.errors directly.
+# TODO(mlody-label-parsing): remove re-export after all callers are migrated.
+from mlody.core.label.errors import LabelParseError as LabelParseError
+
 
 class WorkspaceResolutionError(Exception):
     """Base class for all workspace resolution errors."""
-
-
-class LabelParseError(WorkspaceResolutionError):
-    """The label string has invalid syntax."""
-
-    def __init__(self, label: str, reason: str) -> None:
-        self.label = label
-        self.reason = reason
-        super().__init__(f"Cannot parse label {label!r}: {reason}")
 
 
 class UnknownRefError(WorkspaceResolutionError):

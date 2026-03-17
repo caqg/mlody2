@@ -10,6 +10,7 @@ o_py_library(
     ],
     visibility = ["//:__subpackages__"],
     deps = [
+        "//mlody/common:context_lib",
         "//mlody/core:core_lib",
         "//mlody/resolver:resolver_lib",
         "@pip//click",

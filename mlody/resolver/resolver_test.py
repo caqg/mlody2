@@ -61,18 +61,18 @@ class TestParseLabel:
         assert inner == "@lexica//models:bert"
 
     def test_missing_pipe_raises_label_parse_error(self) -> None:
-        # Scenario: missing '|' with non-@// prefix raises LabelParseError
+        # Scenario: workspace-only label raises LabelParseError — no entity spec
         with pytest.raises(LabelParseError) as exc_info:
             parse_label("notaref")
         assert exc_info.value.label == "notaref"
-        assert "|" in exc_info.value.reason or "separator" in exc_info.value.reason
+        assert "entity" in exc_info.value.reason or "//" in exc_info.value.reason
 
     def test_inner_label_not_at_or_slash_raises_label_parse_error(self) -> None:
-        # Scenario: inner label does not start with @ or // raises LabelParseError
+        # Scenario: invalid inner label (entity does not start with @//) raises LabelParseError
         with pytest.raises(LabelParseError) as exc_info:
             parse_label("main|notaninnerref")
         assert exc_info.value.label == "main|notaninnerref"
-        assert "notaninnerref" in exc_info.value.reason
+        assert "//" in exc_info.value.reason
 
 
 # ---------------------------------------------------------------------------
@@ -281,9 +281,11 @@ class TestResolveWorkspaceCommittoidPath:
 
     def test_resolved_sha_is_none_for_cwd_path(self, tmp_path: Path) -> None:
         # Scenario: resolved_sha=None on cwd path
+        # Use a label with a non-empty path — the core parser requires path to
+        # be non-empty after '//' (grammar: path_segments = 1*path_component).
         with patch("mlody.resolver.resolver.Workspace") as mock_ws_cls:
             mock_ws_cls.return_value = MagicMock()
-            _, sha = resolve_workspace("@bert//:lr", monorepo_root=tmp_path)
+            _, sha = resolve_workspace("@bert//models:lr", monorepo_root=tmp_path)
 
         assert sha is None
 

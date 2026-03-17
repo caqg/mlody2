@@ -51,6 +51,7 @@ o_py_test(
 o_py_library(
     name = "common_lib",
     srcs = [
+        "__init__.py",
         "context.py",
         "struct.py",
     ],

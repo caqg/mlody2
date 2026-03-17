@@ -6,7 +6,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from rich.console import Console
 from rich.syntax import Syntax
@@ -16,6 +16,30 @@ from mlody.common.context import ctx as mlody_ctx
 from mlody.core.targets import TargetAddress, parse_target, resolve_target_value
 
 _logger = logging.getLogger(__name__)
+
+
+def force(v: object) -> object:
+    """Materialise a virtual value Struct; return all other inputs unchanged.
+
+    A "virtual value" is a Struct with ``kind == "value"`` whose ``location``
+    has ``type == "virtual"``.  In that case ``location.materializer(v)`` is
+    called and its return value is returned.  All other inputs pass through.
+    """
+    from common.python.starlarkish.core.struct import Struct
+
+    if not isinstance(v, Struct):
+        return v
+    if getattr(v, "kind", None) != "value":
+        return v
+    loc = getattr(v, "location", None)
+    if loc is None:
+        return v
+    if getattr(loc, "type", None) != "virtual":
+        return v
+    materializer = getattr(loc, "materializer", None)
+    if materializer is None:
+        return v
+    return cast(Any, materializer)(v)
 
 
 class WorkspaceLoadError(Exception):
@@ -63,7 +87,37 @@ class Workspace:
     def root_infos(self) -> dict[str, RootInfo]:
         return self._root_infos
 
-    def load(self) -> None:
+    @property
+    def info(self) -> object:
+        """Synthesised workspace-level metadata (git state + registered roots).
+
+        Returned as a Struct so field access works in .mlody files and the
+        show command can traverse sub-fields (e.g. "'info.branch").
+        """
+        import subprocess
+
+        from common.python.starlarkish.core.struct import struct
+
+        def _git(*args: str) -> str:
+            try:
+                result = subprocess.run(
+                    ["git", "-C", str(self._monorepo_root), *args],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                return result.stdout.strip()
+            except Exception:
+                return ""
+
+        return struct(
+            path=str(self._monorepo_root),
+            branch=_git("branch", "--show-current"),
+            sha=_git("rev-parse", "HEAD"),
+            roots=sorted(self._root_infos.keys()),
+        )
+
+    def load(self, verbose: bool = False) -> None:
         """Execute two-phase loading of pipeline definitions."""
         # Phase 1: Root discovery
         if not self._roots_file.exists():
@@ -71,6 +125,14 @@ class Workspace:
             raise FileNotFoundError(msg)
 
         self._evaluator.eval_file(self._roots_file)
+
+        # Load type definitions (best-effort; may not be available in all environments)
+        types_path = self._monorepo_root / "mlody" / "common" / "types.mlody"
+        if types_path not in self._evaluator.loaded_files:
+            try:
+                self._evaluator.eval_file(types_path)
+            except Exception:
+                pass
 
         self._root_infos = {}
         for _key, root_obj in self._evaluator.roots.items():
@@ -102,11 +164,100 @@ class Workspace:
         if load_errors:
             raise WorkspaceLoadError(load_errors)
 
-        self._evaluator.resolve()
-        data = {k: v.to_dict() if hasattr(v, "to_dict") else v for k, v in self._evaluator.all.items()}
-        self._console.print(Syntax(json.dumps(data, indent=2, default=repr), "json"))
+        if verbose:
+            data = {k: v.to_dict() if hasattr(v, "to_dict") else v for k, v in self._evaluator.all.items()}
+            self._console.print(Syntax(json.dumps(data, indent=2, default=repr), "json"))
 
     def resolve(self, target: str | TargetAddress) -> object:
-        """Parse (if string) and resolve a target to a value."""
+        """Parse (if string) and resolve a target to a value.
+
+        Supports:
+        - Entity-spec labels with a name:  @root//pkg:name, //pkg:name, :name
+        - Entity-spec labels without name: @root//pkg, //pkg  → root struct
+        - Workspace-level attribute labels: 'attr, 'attr.subfield
+        """
+        if isinstance(target, str) and target.startswith("'"):
+            # Workspace-attribute label: return a virtual value Struct whose
+            # materializer forces the attribute access lazily.
+            from mlody.core.label import parse_label as _core_parse_label
+            from common.python.starlarkish.core.struct import Struct
+
+            lbl = _core_parse_label(target)
+            if lbl.attribute_path is None:
+                msg = f"Empty attribute path in label: {target!r}"
+                raise ValueError(msg)
+
+            ws_type = self._evaluator._types_by_name.get("mlody-workspace")  # type: ignore[attr-defined]
+            if ws_type is None:
+                msg = "Type 'mlody-workspace' is not registered; ensure load() is called before resolve()"
+                raise RuntimeError(msg)
+
+            attr_path = lbl.attribute_path
+            _ws_ref = self
+
+            def _materializer(_v: object) -> object:
+                    _logger.debug("workspace materializer invoked for label %r with value %r", target, _v)
+                    obj: object = _ws_ref
+                    for segment in attr_path:
+                        obj = getattr(obj, segment)
+                    return obj
+
+            virtual_loc = Struct(
+                kind="location",
+                type="virtual",
+                name="virtual",
+                materializer=_materializer,
+            )
+            return Struct(
+                kind="value",
+                type=ws_type,
+                location=virtual_loc,
+                label=target,
+                _lineage=[],
+            )
+
+        if isinstance(target, str) and (
+            target.startswith("@") or target.startswith("//")
+        ):
+            # Use the core label parser to detect name-less entity specs
+            # (e.g. @root//path or //path without a :name).  parse_target
+            # requires a :name, so we handle this case directly.
+            from mlody.core.label import parse_label as _core_parse_label
+            from mlody.core.label.errors import LabelParseError as _LabelParseError
+
+            try:
+                lbl = _core_parse_label(target)
+            except _LabelParseError:
+                pass  # fall through to parse_target for legacy error handling
+            else:
+                if lbl.entity is not None and lbl.entity.name is None:
+                    # No specific entity name: return the root struct so the
+                    # caller can inspect all entities registered on that root.
+                    roots = self._evaluator._roots_by_name
+                    if lbl.entity.root is not None:
+                        if lbl.entity.root not in roots:
+                            available = sorted(roots)
+                            msg = f"Root {lbl.entity.root!r} not found; available roots: {available}"
+                            raise KeyError(msg)
+                        return roots[lbl.entity.root]
+                    # No root and no name: return all roots dict
+                    return dict(roots)
+
+                if lbl.entity is not None and lbl.entity.root is None and lbl.entity.name is not None:
+                    # No @root prefix: path is relative to monorepo top.
+                    # Resolve by looking up the entity name directly in the
+                    # evaluated file's module globals.
+                    file_path = self._monorepo_root / (lbl.entity.path.lstrip("/") + ".mlody")
+                    if file_path not in self._evaluator.loaded_files:
+                        self._evaluator.eval_file(file_path)
+                    module_globals: dict[str, object] = self._evaluator._module_globals.get(file_path, {})  # type: ignore[attr-defined]
+                    name_parts = lbl.entity.name.split(".")
+                    if name_parts[0] not in module_globals:
+                        raise KeyError(f"Entity {name_parts[0]!r} not found in {file_path}")
+                    obj = module_globals[name_parts[0]]
+                    for field in name_parts[1:]:
+                        obj = getattr(obj, field)
+                    return obj
+
         address = parse_target(target) if isinstance(target, str) else target
         return resolve_target_value(address, self._evaluator._roots_by_name)

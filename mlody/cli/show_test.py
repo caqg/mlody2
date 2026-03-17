@@ -29,7 +29,7 @@ class TestShowFn:
 
         with patch("mlody.cli.show.resolve_workspace") as mock_rw:
             mock_rw.return_value = (mock_ws, None)
-            result = show_fn("@bert//:lr", monorepo_root=tmp_path)
+            result = show_fn("@bert//models:lr", monorepo_root=tmp_path)
 
         assert result == 0.001
 
@@ -39,13 +39,14 @@ class TestShowFn:
 
         with patch("mlody.cli.show.resolve_workspace") as mock_rw:
             mock_rw.return_value = (mock_ws, None)
-            show_fn("@bert//:lr", monorepo_root=tmp_path)
+            show_fn("@bert//models:lr", monorepo_root=tmp_path)
 
         mock_rw.assert_called_once_with(
-            "@bert//:lr",
+            "@bert//models:lr",
             monorepo_root=tmp_path,
             roots_file=None,
             print_fn=print,
+            verbose=False,
         )
 
     def test_workspace_resolve_called_with_inner_label(self, tmp_path: Path) -> None:
@@ -54,9 +55,9 @@ class TestShowFn:
 
         with patch("mlody.cli.show.resolve_workspace") as mock_rw:
             mock_rw.return_value = (mock_ws, None)
-            show_fn("@bert//:lr", monorepo_root=tmp_path)
+            show_fn("@bert//models:lr", monorepo_root=tmp_path)
 
-        mock_ws.resolve.assert_called_once_with("@bert//:lr")
+        mock_ws.resolve.assert_called_once_with("@bert//models:lr")
 
     def test_committoid_label_uses_inner_label_for_resolve(self, tmp_path: Path) -> None:
         mock_ws = MagicMock()
@@ -64,10 +65,10 @@ class TestShowFn:
 
         with patch("mlody.cli.show.resolve_workspace") as mock_rw:
             mock_rw.return_value = (mock_ws, "a" * 40)
-            show_fn("main|@bert//:lr", monorepo_root=tmp_path)
+            show_fn("main|@bert//models:lr", monorepo_root=tmp_path)
 
         # resolve() must be called with the inner label, not the full label
-        mock_ws.resolve.assert_called_once_with("@bert//:lr")
+        mock_ws.resolve.assert_called_once_with("@bert//models:lr")
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +89,7 @@ class TestShowCommandCwdTarget:
             mock_rw.return_value = (mock_ws, None)
             result = runner.invoke(
                 cli,
-                ["show", "@bert//:lr"],
+                ["show", "@bert//models:lr"],
                 obj={"monorepo_root": tmp_path, "roots": None, "verbose": False},
             )
 
@@ -102,7 +103,7 @@ class TestShowCommandCwdTarget:
         ws.root_infos = {}
 
         runner = CliRunner()
-        result = runner.invoke(cli, ["show", "@bert//:lr"], obj={"workspace": ws, "verbose": False})
+        result = runner.invoke(cli, ["show", "@bert//models:lr"], obj={"workspace": ws, "verbose": False})
 
         assert result.exit_code == 0
         assert "0.001" in result.output
@@ -128,15 +129,16 @@ class TestShowCommandCommittoidTarget:
             mock_rw.return_value = (mock_ws, "a" * 40)
             result = runner.invoke(
                 cli,
-                ["show", "main|@bert//:lr"],
+                ["show", "main|@bert//models:lr"],
                 obj={"monorepo_root": tmp_path, "roots": None, "verbose": False},
             )
 
         assert result.exit_code == 0
         mock_rw.assert_called_once_with(
-            "main|@bert//:lr",
+            "main|@bert//models:lr",
             monorepo_root=tmp_path,
             roots_file=None,
+            verbose=False,
         )
 
     def test_committoid_target_calls_workspace_resolve_with_inner_label(
@@ -151,12 +153,12 @@ class TestShowCommandCommittoidTarget:
             mock_rw.return_value = (mock_ws, "a" * 40)
             runner.invoke(
                 cli,
-                ["show", "main|@bert//:lr"],
+                ["show", "main|@bert//models:lr"],
                 obj={"monorepo_root": tmp_path, "roots": None, "verbose": False},
             )
 
         # workspace.resolve must be called with the inner label only
-        mock_ws.resolve.assert_called_once_with("@bert//:lr")
+        mock_ws.resolve.assert_called_once_with("@bert//models:lr")
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +183,7 @@ class TestShowCommandMixedTargets:
             mock_rw.side_effect = [(mock_ws_cwd, None), (mock_ws_commit, "a" * 40)]
             result = runner.invoke(
                 cli,
-                ["show", "@bert//:lr", "main|@bert//:lr"],
+                ["show", "@bert//models:lr", "main|@bert//models:lr"],
                 obj={"monorepo_root": tmp_path, "roots": None, "verbose": False},
             )
 
@@ -213,7 +215,7 @@ class TestShowCommandVerbose:
                 mock_rw.return_value = (mock_ws, full_sha)
                 runner.invoke(
                     cli,
-                    ["--verbose", "show", "main|@bert//:lr"],
+                    ["--verbose", "show", "main|@bert//models:lr"],
                     obj={"monorepo_root": tmp_path, "roots": None, "verbose": True},
                 )
 
@@ -234,7 +236,7 @@ class TestShowCommandOutput:
         ws.root_infos = {}
 
         runner = CliRunner()
-        result = runner.invoke(cli, ["show", "@bert//:lr"], obj={"workspace": ws, "verbose": False})
+        result = runner.invoke(cli, ["show", "@bert//models:lr"], obj={"workspace": ws, "verbose": False})
 
         assert result.exit_code == 0
         assert "0.001" in result.output
@@ -245,7 +247,7 @@ class TestShowCommandOutput:
         ws.root_infos = {}
 
         runner = CliRunner()
-        result = runner.invoke(cli, ["show", "@bert//:config"], obj={"workspace": ws, "verbose": False})
+        result = runner.invoke(cli, ["show", "@bert//models:config"], obj={"workspace": ws, "verbose": False})
 
         assert result.exit_code == 0
         assert "bert" in result.output
@@ -258,7 +260,7 @@ class TestShowCommandOutput:
 
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["show", "@bert//:lr", "@bert//:opt"], obj={"workspace": ws, "verbose": False}
+            cli, ["show", "@bert//models:lr", "@bert//models:opt"], obj={"workspace": ws, "verbose": False}
         )
 
         assert result.exit_code == 0
@@ -282,7 +284,7 @@ class TestShowCommandErrors:
 
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["show", "@NONEXISTENT//:x"], obj={"workspace": ws, "verbose": False}
+            cli, ["show", "@NONEXISTENT//pkg:x"], obj={"workspace": ws, "verbose": False}
         )
 
         assert result.exit_code == 1
@@ -296,7 +298,7 @@ class TestShowCommandErrors:
         ws.root_infos = {}
 
         runner = CliRunner()
-        result = runner.invoke(cli, ["show", "@bert//:bad_field"], obj={"workspace": ws, "verbose": False})
+        result = runner.invoke(cli, ["show", "@bert//models:bad_field"], obj={"workspace": ws, "verbose": False})
 
         assert result.exit_code == 1
         assert "bad_field" in result.stderr
@@ -308,7 +310,7 @@ class TestShowCommandErrors:
 
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["show", "@bert//:lr", "@MISSING//:x"], obj={"workspace": ws, "verbose": False}
+            cli, ["show", "@bert//models:lr", "@MISSING//pkg:x"], obj={"workspace": ws, "verbose": False}
         )
 
         assert result.exit_code == 1
@@ -324,7 +326,7 @@ class TestShowCommandErrors:
             mock_rw.side_effect = UnknownRefError("nosuchref", "origin")
             result = runner.invoke(
                 cli,
-                ["show", "nosuchref|@bert//:lr"],
+                ["show", "nosuchref|@bert//models:lr"],
                 obj={"monorepo_root": tmp_path, "roots": None, "verbose": False},
             )
 
@@ -345,7 +347,7 @@ class TestShowCommandErrors:
             ]
             result = runner.invoke(
                 cli,
-                ["show", "bad|@bert//:lr", "@bert//:good"],
+                ["show", "bad|@bert//models:lr", "@bert//models:good"],
                 obj={"monorepo_root": tmp_path, "roots": None, "verbose": False},
             )
 

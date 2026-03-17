@@ -160,3 +160,22 @@ def test_value_type_struct_as_location_raises_type_error() -> None:
     """TC-009: passing a type struct as location raises TypeError."""
     with pytest.raises(TypeError):
         _eval('value(name="bad", type=integer(), location=integer())')
+
+
+# ---------------------------------------------------------------------------
+# TC-010: freshly registered value has an empty _lineage list
+# ---------------------------------------------------------------------------
+
+
+def test_value_has_empty_lineage_on_creation() -> None:
+    """TC-010: a new value has _lineage == []."""
+    ev = _eval('value(name="v", type=integer(), location=s3())')
+    v = ev._values_by_name["v"]
+    assert v._lineage == []
+
+
+def test_value_lineage_is_a_list() -> None:
+    """TC-010: _lineage is a list, not None or missing."""
+    ev = _eval('value(name="v", type=integer(), location=s3())')
+    v = ev._values_by_name["v"]
+    assert isinstance(v._lineage, list)

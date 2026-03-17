@@ -38,6 +38,22 @@ def _resolve_location_ref(value):
     )
 
 
+def _lineage_event(author, timestamp, reason):
+    """Create a single lineage event struct.
+
+    Args:
+        author:    string — who/what generated this event (e.g. "mlody")
+        timestamp: string — ISO-8601 or unix epoch as string
+        reason:    string — why this event occurred (one of a fixed set, TBD)
+    """
+    return struct(
+        kind="lineage_event",
+        author=author,
+        timestamp=timestamp,
+        reason=reason,
+    )
+
+
 def _value_impl(ctx):
     type_ref = _resolve_type_ref(ctx.attr.type)
     loc_ref = _resolve_location_ref(ctx.attr.location)
@@ -47,6 +63,8 @@ def _value_impl(ctx):
         name=ctx.attr.name,
         type=type_ref,
         location=loc_ref,
+        label=python.getattr(ctx.attr, "label", None),
+        _lineage=[],          # managed by MLody, not the user
     )
     builtins.register(ctx.kind, value_struct)
     return {}
@@ -59,5 +77,6 @@ value = rule(
         "name":     attr(type="string"),
         "type":     attr(type="type_ref"),
         "location": attr(type="location_ref"),
+        "label":    attr(type="string", mandatory=False),
     },
 )
