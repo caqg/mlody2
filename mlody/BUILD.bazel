@@ -1,4 +1,32 @@
 load("//build/bzl:python.bzl", "o_py_library")
+load("//build/copybara:copybara.bzl", "copybara_workflow")
+
+copybara_workflow(
+    name = "mlody",
+    excludes = [
+        "mlody/docs/**",
+    ],
+    includes = [
+        ".bazeliskrc",
+        "MODULE.bazel",
+        "build/bzl/BUILD.bazel",
+        "build/bzl/python.bzl",
+        "build/modules/BUILD.bazel",
+        "build/modules/python.MODULE.bazel",
+        "build/modules/misc.MODULE.bazel",
+        "build/modules/tools.MODULE.bazel",
+        "requirements/**",
+        "tools/**",
+        "BUILD.bazel",
+        "pyproject.toml",
+        "gazelle_python.yaml",
+        "mlody/**",
+        "common/python/starlarkish/**",
+    ],
+    moves = {
+        "mlody/EXTERNAL_LICENSE": "LICENSE",
+    },
+)
 
 o_py_library(
     name = "mlody_lib",
