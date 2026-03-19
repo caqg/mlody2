@@ -13,6 +13,7 @@ from rich.syntax import Syntax
 
 from common.python.starlarkish.evaluator.evaluator import Evaluator
 from mlody.common.context import ctx as mlody_ctx
+from mlody.core.source_parser import extract_entity_ranges
 from mlody.core.targets import TargetAddress, parse_target, resolve_target_value
 
 _logger = logging.getLogger(__name__)
@@ -76,7 +77,12 @@ class Workspace:
         self._monorepo_root = monorepo_root
         self._roots_file = roots_file or (monorepo_root / "mlody" / "roots.mlody")
         self._console = console if console is not None else Console()
-        self._evaluator = Evaluator(root=monorepo_root, print_fn=print_fn, extra_ctx=mlody_ctx)
+        self._evaluator = Evaluator(
+            root=monorepo_root,
+            print_fn=print_fn,
+            extra_ctx=mlody_ctx,
+            line_range_extractor=extract_entity_ranges,
+        )
         self._root_infos: dict[str, RootInfo] = {}
 
     @property

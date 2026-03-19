@@ -193,6 +193,7 @@ class Evaluator:
         init_files: list[Path] | None = None,
         print_fn: Callable[..., None] = builtins.print,
         extra_ctx: Struct | None = None,
+        line_range_extractor: Callable[[Path, str], dict[tuple[str, str], tuple[int, int]]] | None = None,
     ) -> None:
         self.loaded_files: set[Path] = set()
         self._eval_stack: list[Path] = []
@@ -223,6 +224,9 @@ class Evaluator:
         self._print_fn = print_fn
         # Extra fields merged into builtins.ctx for every file (e.g. workspace/run info).
         self._extra_ctx = extra_ctx
+        # Optional hook: maps (kind, name) -> (start_line, end_line) per file.
+        self._line_range_extractor = line_range_extractor
+        self._file_ranges: dict[Path, dict[tuple[str, str], tuple[int, int]]] = {}
         if init_files:
             for init_file in init_files:
                 path_to_load = init_file
@@ -237,6 +241,14 @@ class Evaluator:
         except (ValueError, AttributeError):
             _stem = getattr(ctx, "file", Path("unknown")).stem
         key = f"{_stem}:{thing.name}"
+
+        if self._line_range_extractor is not None:
+            sr = self._file_ranges.get(ctx.file, {}).get((kind, thing.name))
+            if sr is not None and isinstance(thing, Struct):
+                thing = Struct(**thing.as_mapping(), _source_range=Struct(  # type: ignore[assignment]
+                    filepath=str(rel_file), start_line=sr[0], end_line=sr[1]
+                ))
+
         if kind == 'root':
             self.roots[key] = thing
             self._roots_by_name[thing.name] = thing
@@ -392,6 +404,9 @@ class Evaluator:
                 script_content = f.read()
 
             _validate_loads_at_top(script_content, file_path)
+
+            if self._line_range_extractor is not None:
+                self._file_ranges[file_path] = self._line_range_extractor(file_path, script_content)
 
             # Prepare sandbox globals.  Spread SAFE_BUILTINS and override "print"
             # with the instance-level print_fn so that callers (e.g. the LSP server)

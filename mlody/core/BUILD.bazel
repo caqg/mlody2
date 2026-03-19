@@ -34,15 +34,35 @@ o_py_test(
 )
 
 o_py_library(
+    name = "source_parser_lib",
+    srcs = ["source_parser.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "@pip//tree_sitter",
+        "@pip//tree_sitter_starlark",
+    ],
+)
+
+o_py_test(
+    name = "source_parser_test",
+    srcs = ["source_parser_test.py"],
+    deps = [
+        ":core_lib",
+        "@pip//pytest",
+    ],
+)
+
+o_py_library(
     name = "workspace_lib",
     srcs = ["workspace.py"],
     data = ["builtins.mlody"],
     visibility = ["//:__subpackages__"],
     deps = [
+        ":source_parser_lib",
         ":targets_lib",
         "//common/python/starlarkish/core:core_lib",
         "//common/python/starlarkish/evaluator:evaluator_lib",
-        "//mlody/common:context_lib",
+        "//mlody/common:context_lib",  # keep
         "@pip//rich",
     ],
 )
@@ -52,7 +72,7 @@ o_py_test(
     srcs = ["workspace_test.py"],
     deps = [
         ":core_lib",
-        "//mlody/common:context_lib",
+        "//mlody/common:context_lib",  # keep
         "@pip//pyfakefs",
         "@pip//pytest",
         "@pip//rich",
@@ -64,15 +84,18 @@ o_py_library(
     srcs = [
         "__init__.py",
         "plan.py",
+        "source_parser.py",
         "targets.py",
         "workspace.py",
     ],
     visibility = ["//:__subpackages__"],
     deps = [
         "//common/python/starlarkish/evaluator:evaluator_lib",
-        "//mlody:mlody_lib",
-        "//mlody/common:context_lib",
-        "//mlody/core/label:label_pkg",
+        "//mlody:mlody_lib",  # keep — provides mlody/__init__.py (namespace package)
+        "//mlody/common:context_lib",  # keep
+        "//mlody/core/label:label_pkg",  # keep
         "@pip//rich",
+        "@pip//tree_sitter",
+        "@pip//tree_sitter_starlark",
     ],
 )
