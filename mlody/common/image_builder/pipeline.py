@@ -39,18 +39,18 @@ def run(inputs: PipelineInputs) -> SuccessResult:
     remote_url = resolve_remote(inputs.remote, inputs.cwd)
 
     # Phase 2: shallow clone at the pinned SHA, using cache if available
-    clone_dir = ensure_clone(
+    clone_result = ensure_clone(
         inputs.sha, remote_url, inputs.cache_root, inputs.cwd, inputs.dirty_policy
     )
 
     # Phase 3: build the combined OCI image target inside the clone
-    run_bazel_build(clone_dir, inputs.targets)
+    run_bazel_build(inputs.sha, clone_result, inputs.targets)
 
     # Phase 4: derive one OCI tag per input target
     tags = derive_tags(inputs.targets, inputs.sha)
 
     # Phase 5: push to registry with all derived tags
-    push_result = push_image(clone_dir, inputs.registry, tags, auth)
+    push_result = push_image(clone_result.path, inputs.registry, tags, auth)
 
     return SuccessResult(
         image_digest=push_result.image_digest,

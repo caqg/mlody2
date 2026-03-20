@@ -85,7 +85,7 @@ class TestEnsureClone:
         with patch("mlody.common.image_builder.phases.clone.subprocess.run", side_effect=fake_run):
             result = ensure_clone(_SHA, _REMOTE, cache_root=_CACHE_ROOT)
 
-        assert result == _CACHE_ROOT / _SHA
+        assert result.path == _CACHE_ROOT / _SHA
         assert ["bazel", "clean"] in bazel_calls
 
     def test_cache_hit_skips_git_clone_calls(self, fs: object) -> None:
@@ -115,7 +115,7 @@ class TestEnsureClone:
         assert git_calls == []
         # bazel clean must always run
         assert ["bazel", "clean"] in bazel_calls
-        assert result == _CLONE_DEST
+        assert result.path == _CLONE_DEST
 
     def test_partial_directory_cleaned_up_on_clone_failure(
         self, fs: object
@@ -183,7 +183,7 @@ class TestEnsureClone:
         with patch("mlody.common.image_builder.phases.clone.subprocess.run", side_effect=fake_run):
             result = ensure_clone(_SHA, _REMOTE, cache_root=_CACHE_ROOT, cwd=local_cwd)
 
-        assert result == _CLONE_DEST
+        assert result.path == _CLONE_DEST
         assert _REMOTE in remote_attempted
         assert str(local_cwd) in local_attempted
 
@@ -300,7 +300,7 @@ class TestDirtyPolicy:
         with patch("mlody.common.image_builder.phases.clone.subprocess.run", side_effect=fake_run):
             result = ensure_clone(_SHA, _REMOTE, cache_root=_CACHE_ROOT, cwd=local_cwd, dirty_policy="error")
 
-        assert result == _CLONE_DEST
+        assert result.path == _CLONE_DEST
 
     def test_dirty_policy_apply_calls_git_apply(self, fs: object) -> None:
         _CACHE_ROOT.mkdir(parents=True)
@@ -326,7 +326,7 @@ class TestDirtyPolicy:
         with patch("mlody.common.image_builder.phases.clone.subprocess.run", side_effect=fake_run):
             result = ensure_clone(_SHA, _REMOTE, cache_root=_CACHE_ROOT, cwd=local_cwd, dirty_policy="apply")
 
-        assert result == _CLONE_DEST
+        assert result.path == _CLONE_DEST
         assert any("apply" in a for a in apply_calls)
 
     def test_dirty_policy_apply_copies_untracked_files(self, fs: object) -> None:
@@ -343,7 +343,7 @@ class TestDirtyPolicy:
         with patch("mlody.common.image_builder.phases.clone.subprocess.run", side_effect=fake_run):
             result = ensure_clone(_SHA, _REMOTE, cache_root=_CACHE_ROOT, cwd=local_cwd, dirty_policy="apply")
 
-        assert (result / "new_file.py").exists()
+        assert (result.path / "new_file.py").exists()
 
     def test_dirty_policy_error_raises_on_cache_hit_with_changes(self, fs: object) -> None:
         """error policy must fire even when the clone is already cached."""

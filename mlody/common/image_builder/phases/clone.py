@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import shutil
 import subprocess
 from pathlib import Path
@@ -17,6 +18,21 @@ _CACHE_ROOT_DEFAULT = Path.home() / ".cache" / "mlody" / "builds"
 #   error  — raise CloneError if any changes are detected
 #   apply  — apply tracked-file diff and copy untracked files into the clone
 DirtyPolicy = Literal["ignore", "error", "apply"]
+
+
+@dataclasses.dataclass(frozen=True)
+class CloneResult:
+    """Outcome of ensure_clone.
+
+    path              — path to the clone directory
+    applied_patch     — unified diff that was applied (empty string if none)
+    applied_untracked — relative paths of untracked files that were copied
+                        (empty list if none)
+    """
+
+    path: Path
+    applied_patch: str
+    applied_untracked: list[str]
 
 
 def _cache_dir(cache_root: Path, sha: str) -> Path:
@@ -106,13 +122,17 @@ def _local_changes(cwd: Path, sha: str) -> tuple[str, list[str]]:
     return patch, untracked
 
 
-def _apply_local_changes(dest: Path, cwd: Path, sha: str) -> None:
-    """Apply working-tree changes from cwd (relative to sha) into dest.
+def _apply_local_changes(
+    dest: Path,
+    cwd: Path,
+    sha: str,
+    patch: str,
+    untracked: list[str],
+) -> None:
+    """Apply pre-computed working-tree changes into dest.
 
-    Applies the tracked-file diff via `git apply` and copies untracked files.
+    Applies *patch* via `git apply` and copies each path in *untracked*.
     """
-    patch, untracked = _local_changes(cwd, sha)
-
     if patch:
         result = subprocess.run(
             ["git", "apply", "-"],
@@ -145,7 +165,7 @@ def ensure_clone(
     cache_root: Path | None = None,
     cwd: Path | None = None,
     dirty_policy: DirtyPolicy = "ignore",
-) -> Path:
+) -> CloneResult:
     """Ensure a shallow clone for sha exists in cache_root.
 
     Cache hit: reuse the existing directory, run ``bazel clean``.
@@ -163,7 +183,7 @@ def ensure_clone(
                  if a cached clone already exists it is invalidated first
                  so changes are applied to a clean base
 
-    Returns the path to the clone directory.
+    Returns a CloneResult with the clone path and applied-diff metadata.
     Raises CloneError on any failure.
     """
     root = cache_root if cache_root is not None else _CACHE_ROOT_DEFAULT
@@ -218,10 +238,18 @@ def ensure_clone(
         finally:
             _release_lock(lock)
 
+    applied_patch = ""
+    applied_untracked: list[str] = []
     if dirty_policy == "apply" and (patch or untracked):
-        _apply_local_changes(dest, local_source, sha)
+        _apply_local_changes(dest, local_source, sha, patch, untracked)
+        applied_patch = patch
+        applied_untracked = untracked
 
     info("clone", sha=sha, step="bazel_clean", dest=str(dest))
     _run_bazel(["bazel", "clean"], cwd=dest)
 
-    return dest
+    return CloneResult(
+        path=dest,
+        applied_patch=applied_patch,
+        applied_untracked=applied_untracked,
+    )

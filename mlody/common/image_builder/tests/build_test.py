@@ -9,9 +9,19 @@ import pytest
 
 from mlody.common.image_builder.errors import BazelBuildError
 from mlody.common.image_builder.phases.build import BazelResult, _DYN_PKG, run_bazel_build
+from mlody.common.image_builder.phases.clone import CloneResult
 
+_SHA = "a" * 40
 _CLONE_DIR = Path("/fake/clone/dir")
 _TARGETS = ["//mlody/lsp:lsp_server", "//mlody/core:worker"]
+
+
+def _clean_result(path: Path = _CLONE_DIR) -> CloneResult:
+    return CloneResult(path=path, applied_patch="", applied_untracked=[])
+
+
+def _dirty_result(patch: str = "diff --git a/f.py b/f.py\n") -> CloneResult:
+    return CloneResult(path=_CLONE_DIR, applied_patch=patch, applied_untracked=["new.py"])
 
 
 def _make_subprocess_result(
@@ -32,7 +42,7 @@ def test_run_bazel_build_returns_bazel_result_on_success(fs: object) -> None:
         "mlody.common.image_builder.phases.build.subprocess.run",
         return_value=_make_subprocess_result(stdout="build output", stderr=""),
     ):
-        result = run_bazel_build(_CLONE_DIR, _TARGETS)
+        result = run_bazel_build(_SHA, _clean_result(), _TARGETS)
 
     assert isinstance(result, BazelResult)
     assert result.stdout == "build output"
@@ -45,7 +55,7 @@ def test_run_bazel_build_raises_on_nonzero_exit(fs: object) -> None:
         return_value=_make_subprocess_result(returncode=1, stderr="ERROR: build failed"),
     ):
         with pytest.raises(BazelBuildError) as exc_info:
-            run_bazel_build(_CLONE_DIR, _TARGETS)
+            run_bazel_build(_SHA, _clean_result(), _TARGETS)
 
     assert exc_info.value.context["returncode"] == 1
     assert "ERROR: build failed" in str(exc_info.value.context["stderr"])
@@ -58,7 +68,7 @@ def test_run_bazel_build_writes_build_bazel_with_targets(fs: object) -> None:
         "mlody.common.image_builder.phases.build.subprocess.run",
         return_value=_make_subprocess_result(),
     ):
-        run_bazel_build(_CLONE_DIR, _TARGETS)
+        run_bazel_build(_SHA, _clean_result(), _TARGETS)
 
     build_file = _CLONE_DIR / _DYN_PKG / "BUILD.bazel"
     assert build_file.exists()
@@ -67,6 +77,36 @@ def test_run_bazel_build_writes_build_bazel_with_targets(fs: object) -> None:
         assert target in content
     assert "oci_image" in content
     assert "pkg_tar" in content
+
+
+def test_run_bazel_build_includes_revision_label(fs: object) -> None:
+    _CLONE_DIR.mkdir(parents=True)  # type: ignore[union-attr]
+
+    with patch(
+        "mlody.common.image_builder.phases.build.subprocess.run",
+        return_value=_make_subprocess_result(),
+    ):
+        run_bazel_build(_SHA, _clean_result(), _TARGETS)
+
+    content = (_CLONE_DIR / _DYN_PKG / "BUILD.bazel").read_text()
+    assert "org.opencontainers.image.revision" in content
+    assert _SHA in content
+    assert 'com.polymath.mlody.dirty": "false"' in content
+
+
+def test_run_bazel_build_marks_dirty_label_when_patch_applied(fs: object) -> None:
+    _CLONE_DIR.mkdir(parents=True)  # type: ignore[union-attr]
+
+    with patch(
+        "mlody.common.image_builder.phases.build.subprocess.run",
+        return_value=_make_subprocess_result(),
+    ):
+        run_bazel_build(_SHA, _dirty_result(), _TARGETS)
+
+    content = (_CLONE_DIR / _DYN_PKG / "BUILD.bazel").read_text()
+    assert 'com.polymath.mlody.dirty": "true"' in content
+    assert "com.polymath.mlody.dirty_files_changed" in content
+    assert "com.polymath.mlody.dirty_untracked" in content
 
 
 def test_run_bazel_build_invokes_correct_target(fs: object) -> None:
@@ -78,7 +118,7 @@ def test_run_bazel_build_invokes_correct_target(fs: object) -> None:
         return _make_subprocess_result()
 
     with patch("mlody.common.image_builder.phases.build.subprocess.run", side_effect=fake_run):
-        run_bazel_build(_CLONE_DIR, _TARGETS)
+        run_bazel_build(_SHA, _clean_result(), _TARGETS)
 
     assert len(captured_calls) == 1
     cmd = captured_calls[0]
@@ -92,6 +132,6 @@ def test_run_bazel_build_error_contains_targets(fs: object) -> None:
         return_value=_make_subprocess_result(returncode=1, stderr=""),
     ):
         with pytest.raises(BazelBuildError) as exc_info:
-            run_bazel_build(_CLONE_DIR, _TARGETS)
+            run_bazel_build(_SHA, _clean_result(), _TARGETS)
 
     assert exc_info.value.context["targets"] == _TARGETS
