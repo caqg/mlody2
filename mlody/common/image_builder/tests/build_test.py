@@ -14,6 +14,7 @@ from mlody.common.image_builder.phases.clone import CloneResult
 _SHA = "a" * 40
 _CLONE_DIR = Path("/fake/clone/dir")
 _TARGETS = ["//mlody/lsp:lsp_server", "//mlody/core:worker"]
+_PY_TARGETS = ["//mlody/cli:mlody", "//repo/smoketest/python/simple:simple"]
 
 
 def _clean_result(path: Path = _CLONE_DIR) -> CloneResult:
@@ -36,12 +37,33 @@ def _make_subprocess_result(
     return mock
 
 
+def _fake_run_no_python(args: list[str], **kwargs: object) -> MagicMock:
+    """subprocess.run side_effect: query returns no Python targets; build succeeds."""
+    if "query" in args:
+        return _make_subprocess_result(returncode=1)
+    return _make_subprocess_result()
+
+
+def _fake_run_all_python(targets: list[str]) -> object:
+    """Return a side_effect that marks all targets as Python binaries."""
+
+    def _inner(args: list[str], **kwargs: object) -> MagicMock:
+        if "query" in args:
+            return _make_subprocess_result(stdout="\n".join(targets))
+        return _make_subprocess_result()
+
+    return _inner
+
+
 def test_run_bazel_build_returns_bazel_result_on_success(fs: object) -> None:
     _CLONE_DIR.mkdir(parents=True)  # type: ignore[union-attr]
-    with patch(
-        "mlody.common.image_builder.phases.build.subprocess.run",
-        return_value=_make_subprocess_result(stdout="build output", stderr=""),
-    ):
+
+    def fake_run(args: list[str], **kwargs: object) -> MagicMock:
+        if "query" in args:
+            return _make_subprocess_result(returncode=1)
+        return _make_subprocess_result(stdout="build output", stderr="")
+
+    with patch("mlody.common.image_builder.phases.build.subprocess.run", side_effect=fake_run):
         result = run_bazel_build(_SHA, _clean_result(), _TARGETS)
 
     assert isinstance(result, BazelResult)
@@ -50,10 +72,13 @@ def test_run_bazel_build_returns_bazel_result_on_success(fs: object) -> None:
 
 def test_run_bazel_build_raises_on_nonzero_exit(fs: object) -> None:
     _CLONE_DIR.mkdir(parents=True)  # type: ignore[union-attr]
-    with patch(
-        "mlody.common.image_builder.phases.build.subprocess.run",
-        return_value=_make_subprocess_result(returncode=1, stderr="ERROR: build failed"),
-    ):
+
+    def fake_run(args: list[str], **kwargs: object) -> MagicMock:
+        if "query" in args:
+            return _make_subprocess_result(returncode=1)
+        return _make_subprocess_result(returncode=1, stderr="ERROR: build failed")
+
+    with patch("mlody.common.image_builder.phases.build.subprocess.run", side_effect=fake_run):
         with pytest.raises(BazelBuildError) as exc_info:
             run_bazel_build(_SHA, _clean_result(), _TARGETS)
 
@@ -61,12 +86,12 @@ def test_run_bazel_build_raises_on_nonzero_exit(fs: object) -> None:
     assert "ERROR: build failed" in str(exc_info.value.context["stderr"])
 
 
-def test_run_bazel_build_writes_build_bazel_with_targets(fs: object) -> None:
+def test_run_bazel_build_writes_build_bazel_with_pkg_tar_for_non_python(fs: object) -> None:
     _CLONE_DIR.mkdir(parents=True)  # type: ignore[union-attr]
 
     with patch(
         "mlody.common.image_builder.phases.build.subprocess.run",
-        return_value=_make_subprocess_result(),
+        side_effect=_fake_run_no_python,
     ):
         run_bazel_build(_SHA, _clean_result(), _TARGETS)
 
@@ -77,6 +102,42 @@ def test_run_bazel_build_writes_build_bazel_with_targets(fs: object) -> None:
         assert target in content
     assert "oci_image" in content
     assert "pkg_tar" in content
+    assert "py_image_layer" not in content
+
+
+def test_run_bazel_build_uses_py_image_layer_for_python_targets(fs: object) -> None:
+    _CLONE_DIR.mkdir(parents=True)  # type: ignore[union-attr]
+
+    with patch(
+        "mlody.common.image_builder.phases.build.subprocess.run",
+        side_effect=_fake_run_all_python(_PY_TARGETS),
+    ):
+        run_bazel_build(_SHA, _clean_result(), _PY_TARGETS)
+
+    content = (_CLONE_DIR / _DYN_PKG / "BUILD.bazel").read_text()
+    for target in _PY_TARGETS:
+        assert target in content
+    assert "py_image_layer" in content
+    assert "pkg_tar" not in content
+    assert "oci_image" in content
+
+
+def test_run_bazel_build_mixes_py_image_layer_and_pkg_tar(fs: object) -> None:
+    _CLONE_DIR.mkdir(parents=True)  # type: ignore[union-attr]
+    mixed = [_PY_TARGETS[0], _TARGETS[0]]
+    py_only = [_PY_TARGETS[0]]
+
+    with patch(
+        "mlody.common.image_builder.phases.build.subprocess.run",
+        side_effect=_fake_run_all_python(py_only),
+    ):
+        run_bazel_build(_SHA, _clean_result(), mixed)
+
+    content = (_CLONE_DIR / _DYN_PKG / "BUILD.bazel").read_text()
+    assert "py_image_layer" in content
+    assert "pkg_tar" in content
+    for label in mixed:
+        assert label in content
 
 
 def test_run_bazel_build_includes_revision_label(fs: object) -> None:
@@ -84,7 +145,7 @@ def test_run_bazel_build_includes_revision_label(fs: object) -> None:
 
     with patch(
         "mlody.common.image_builder.phases.build.subprocess.run",
-        return_value=_make_subprocess_result(),
+        side_effect=_fake_run_no_python,
     ):
         run_bazel_build(_SHA, _clean_result(), _TARGETS)
 
@@ -99,7 +160,7 @@ def test_run_bazel_build_marks_dirty_label_when_patch_applied(fs: object) -> Non
 
     with patch(
         "mlody.common.image_builder.phases.build.subprocess.run",
-        return_value=_make_subprocess_result(),
+        side_effect=_fake_run_no_python,
     ):
         run_bazel_build(_SHA, _dirty_result(), _TARGETS)
 
@@ -115,22 +176,27 @@ def test_run_bazel_build_invokes_correct_target(fs: object) -> None:
 
     def fake_run(args: list[str], **kwargs: object) -> MagicMock:
         captured_calls.append(args)
+        if "query" in args:
+            return _make_subprocess_result(returncode=1)
         return _make_subprocess_result()
 
     with patch("mlody.common.image_builder.phases.build.subprocess.run", side_effect=fake_run):
         run_bazel_build(_SHA, _clean_result(), _TARGETS)
 
-    assert len(captured_calls) == 1
-    cmd = captured_calls[0]
-    assert f"//{_DYN_PKG}:image" in cmd
+    build_calls = [c for c in captured_calls if "build" in c]
+    assert len(build_calls) == 1
+    assert f"//{_DYN_PKG}:image" in build_calls[0]
 
 
 def test_run_bazel_build_error_contains_targets(fs: object) -> None:
     _CLONE_DIR.mkdir(parents=True)  # type: ignore[union-attr]
-    with patch(
-        "mlody.common.image_builder.phases.build.subprocess.run",
-        return_value=_make_subprocess_result(returncode=1, stderr=""),
-    ):
+
+    def fake_run(args: list[str], **kwargs: object) -> MagicMock:
+        if "query" in args:
+            return _make_subprocess_result(returncode=1)
+        return _make_subprocess_result(returncode=1, stderr="")
+
+    with patch("mlody.common.image_builder.phases.build.subprocess.run", side_effect=fake_run):
         with pytest.raises(BazelBuildError) as exc_info:
             run_bazel_build(_SHA, _clean_result(), _TARGETS)
 
