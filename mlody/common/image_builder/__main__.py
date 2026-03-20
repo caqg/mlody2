@@ -16,6 +16,17 @@ from mlody.common.image_builder.pipeline import PipelineInputs, run
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
+
+def _normalize_target(label: str) -> str:
+    """Ensure a Bazel target label starts with '//' or '@'.
+
+    Bazel's CLI accepts relative labels like 'foo/bar:baz', but pkg_tar
+    srcs require absolute labels. Prepend '//' when missing.
+    """
+    if label.startswith("//") or label.startswith("@"):
+        return label
+    return "//" + label
+
 EXIT_CODE_HELP = """\
 Exit codes:
   0  Success -- image built and pushed.
@@ -85,7 +96,7 @@ def main(
         sys.exit(ExitCode.CLONE_FAILURE)
 
     inputs = PipelineInputs(
-        targets=list(targets),
+        targets=[_normalize_target(t) for t in targets],
         sha=sha,
         registry=registry,
         remote=remote,
