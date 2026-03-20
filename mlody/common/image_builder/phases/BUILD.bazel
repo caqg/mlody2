@@ -1,0 +1,17 @@
+load("//build/bzl:python.bzl", "o_py_library")
+
+o_py_library(
+    name = "phases_lib",
+    srcs = [
+        "__init__.py",
+        "build.py",
+        "clone.py",
+        "push.py",
+        "remote.py",
+        "tags.py",
+    ],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//mlody/common/image_builder:image_builder_core",  # keep
+    ],
+)

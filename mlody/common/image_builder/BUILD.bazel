@@ -1,0 +1,49 @@
+load("//build/bzl:python.bzl", "o_py_binary", "o_py_library")
+
+# Core library: errors, logging, output, auth.
+# Phases depend on this; it has no internal deps to avoid cycles.
+o_py_library(
+    name = "image_builder_core",
+    srcs = [
+        "__init__.py",
+        "auth.py",
+        "errors.py",
+        "log.py",
+        "output.py",
+    ],
+    visibility = ["//:__subpackages__"],
+    deps = [],
+)
+
+# Full library: core + phases + pipeline orchestrator.
+o_py_library(
+    name = "image_builder_lib",
+    srcs = ["pipeline.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":image_builder_core",  # keep
+        "//mlody/common/image_builder/phases:phases_lib",  # keep
+    ],
+)
+
+# CLI library: exposes __main__ as importable module for testing.
+o_py_library(
+    name = "cli_lib",
+    srcs = ["__main__.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":image_builder_lib",  # keep
+        "@pip//click",
+    ],
+)
+
+o_py_binary(
+    name = "mlody_image_builder",
+    srcs = ["__main__.py"],
+    main = "__main__.py",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":image_builder_lib",  # keep
+        "@pip//click",
+    ],
+)

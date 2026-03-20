@@ -35,3 +35,22 @@ include("//build/modules:latex.MODULE.bazel")
 # Hermetic tool support
 include("//build/modules:tools.MODULE.bazel")
 ##
+
+####
+# OCI image building (rules_oci + rules_pkg) — required by mlody-image-builder
+bazel_dep(name = "rules_oci", version = "2.0.0")
+bazel_dep(name = "rules_pkg", version = "1.0.1")
+
+oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
+oci.pull(
+    name = "distroless_base",
+    # gcr.io/distroless/base pinned at a stable digest for reproducibility.
+    digest = "sha256:ccaef5ee2f1850270d453fdf700a5392604105cc0c41f0a6d5b77b44b8d134be",
+    image = "gcr.io/distroless/base",
+    platforms = [
+        "linux/amd64",
+        "linux/arm64",
+    ],
+)
+use_repo(oci, "distroless_base", "distroless_base_linux_amd64", "distroless_base_linux_arm64")
+##

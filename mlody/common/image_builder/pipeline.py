@@ -1,0 +1,57 @@
+"""Top-level pipeline orchestrator for mlody-image-builder."""
+
+from __future__ import annotations
+
+import dataclasses
+from pathlib import Path
+
+from mlody.common.image_builder.auth import DockerConfigAuth, RegistryAuth
+from mlody.common.image_builder.errors import BuilderError
+from mlody.common.image_builder.output import SuccessResult
+from mlody.common.image_builder.phases.build import run_bazel_build
+from mlody.common.image_builder.phases.clone import ensure_clone
+from mlody.common.image_builder.phases.push import push_image
+from mlody.common.image_builder.phases.remote import resolve_remote
+from mlody.common.image_builder.phases.tags import derive_tags
+
+
+@dataclasses.dataclass(frozen=True)
+class PipelineInputs:
+    targets: list[str]
+    sha: str
+    registry: str
+    remote: str | None
+    cwd: Path
+    cache_root: Path | None
+    auth: RegistryAuth | None
+
+
+def run(inputs: PipelineInputs) -> SuccessResult:
+    """Execute the five-phase image-builder pipeline.
+
+    Returns SuccessResult on full success.
+    Raises BuilderError (or a subclass) on any phase failure.
+    """
+    auth: RegistryAuth = inputs.auth if inputs.auth is not None else DockerConfigAuth()
+
+    # Phase 1: resolve git remote URL
+    remote_url = resolve_remote(inputs.remote, inputs.cwd)
+
+    # Phase 2: shallow clone at the pinned SHA, using cache if available
+    clone_dir = ensure_clone(inputs.sha, remote_url, inputs.cache_root, inputs.cwd)
+
+    # Phase 3: build the combined OCI image target inside the clone
+    run_bazel_build(clone_dir, inputs.targets)
+
+    # Phase 4: derive one OCI tag per input target
+    tags = derive_tags(inputs.targets, inputs.sha)
+
+    # Phase 5: push to registry with all derived tags
+    push_result = push_image(clone_dir, inputs.registry, tags, auth)
+
+    return SuccessResult(
+        image_digest=push_result.image_digest,
+        image_references=push_result.image_references,
+        commit_sha=inputs.sha,
+        input_targets=inputs.targets,
+    )
