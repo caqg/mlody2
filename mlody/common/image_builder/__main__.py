@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -20,7 +21,7 @@ Exit codes:
   0  Success -- image built and pushed.
   1  Unexpected error (unhandled exception).
   2  Clone failure -- git remote resolution or shallow clone failed.
-  3  Build failure -- `bazel build @dynamic_image//:image` failed.
+  3  Build failure -- `bazel build //_dynamic_image:image` failed.
   4  Push failure -- image push to registry failed.
 """
 
@@ -73,7 +74,9 @@ def main(
         sha=sha,
         registry=registry,
         remote=remote,
-        cwd=Path.cwd(),
+        # BUILD_WORKING_DIRECTORY is set by `bazel run` to the user's actual
+        # working directory. Fall back to Path.cwd() when run directly.
+        cwd=Path(os.environ.get("BUILD_WORKING_DIRECTORY", str(Path.cwd()))),
         cache_root=None,
         auth=None,
     )
