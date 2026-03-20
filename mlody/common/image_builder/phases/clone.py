@@ -5,11 +5,18 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Literal
 
 from mlody.common.image_builder.errors import CloneError
 from mlody.common.image_builder.log import info
 
 _CACHE_ROOT_DEFAULT = Path.home() / ".cache" / "mlody" / "builds"
+
+# What to do when the local CWD has changes relative to the pinned SHA.
+#   ignore — proceed without applying changes (default)
+#   error  — raise CloneError if any changes are detected
+#   apply  — apply tracked-file diff and copy untracked files into the clone
+DirtyPolicy = Literal["ignore", "error", "apply"]
 
 
 def _cache_dir(cache_root: Path, sha: str) -> Path:
@@ -73,11 +80,70 @@ def _clone_from(source: str, sha: str, dest: Path) -> None:
     _run_git(["git", "checkout", sha], cwd=dest)
 
 
+def _local_changes(cwd: Path, sha: str) -> tuple[str, list[str]]:
+    """Return (patch, untracked_paths) for changes in cwd relative to sha.
+
+    patch           — unified diff output of `git diff <sha>` (empty if none)
+    untracked_paths — relative paths of untracked files (empty if none)
+    """
+    diff = subprocess.run(
+        ["git", "diff", sha],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+    )
+    patch = diff.stdout if diff.returncode == 0 else ""
+
+    ls = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+    )
+    untracked = [p for p in ls.stdout.splitlines() if p] if ls.returncode == 0 else []
+
+    return patch, untracked
+
+
+def _apply_local_changes(dest: Path, cwd: Path, sha: str) -> None:
+    """Apply working-tree changes from cwd (relative to sha) into dest.
+
+    Applies the tracked-file diff via `git apply` and copies untracked files.
+    """
+    patch, untracked = _local_changes(cwd, sha)
+
+    if patch:
+        result = subprocess.run(
+            ["git", "apply", "-"],
+            input=patch,
+            cwd=dest,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise CloneError(
+                "Failed to apply local changes to clone",
+                sha=sha,
+                stderr=result.stderr.strip(),
+            )
+        info("clone", sha=sha, step="apply_patch", lines=patch.count("\n"))
+
+    for rel_path in untracked:
+        src = cwd / rel_path
+        dst = dest / rel_path
+        if src.is_file():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+    if untracked:
+        info("clone", sha=sha, step="copy_untracked", count=len(untracked))
+
+
 def ensure_clone(
     sha: str,
     remote_url: str,
     cache_root: Path | None = None,
     cwd: Path | None = None,
+    dirty_policy: DirtyPolicy = "ignore",
 ) -> Path:
     """Ensure a shallow clone for sha exists in cache_root.
 
@@ -88,6 +154,12 @@ def ensure_clone(
     Lock: O_CREAT|O_EXCL sentinel file prevents concurrent clones for the
     same SHA.
 
+    dirty_policy controls what happens when the local CWD has changes
+    relative to the pinned SHA (only relevant when the local fallback is used):
+      "ignore" — proceed without touching the clone (default)
+      "error"  — raise CloneError if any changes are detected
+      "apply"  — apply the diff and copy untracked files into the clone
+
     Returns the path to the clone directory.
     Raises CloneError on any failure.
     """
@@ -95,6 +167,7 @@ def ensure_clone(
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     dest = _cache_dir(root, sha)
+    used_local = False
 
     if _check_cache(root, sha):
         info("clone", sha=sha, cache="hit", dest=str(dest))
@@ -111,10 +184,11 @@ def ensure_clone(
                     # SHA not on remote — try the local working directory.
                     shutil.rmtree(dest, ignore_errors=True)
                     dest.mkdir(parents=True, exist_ok=True)
-                    local_source = str(cwd if cwd is not None else Path.cwd())
-                    info("clone", sha=sha, source="local", local_source=local_source)
+                    local_source = cwd if cwd is not None else Path.cwd()
+                    info("clone", sha=sha, source="local", local_source=str(local_source))
                     try:
-                        _clone_from(local_source, sha, dest)
+                        _clone_from(str(local_source), sha, dest)
+                        used_local = True
                     except CloneError:
                         shutil.rmtree(dest, ignore_errors=True)
                         raise
@@ -122,6 +196,21 @@ def ensure_clone(
                 info("clone", sha=sha, cache="hit-after-lock", dest=str(dest))
         finally:
             _release_lock(lock)
+
+    if used_local and dirty_policy != "ignore":
+        local_source = cwd if cwd is not None else Path.cwd()
+        patch, untracked = _local_changes(local_source, sha)
+        has_changes = bool(patch or untracked)
+        if has_changes:
+            if dirty_policy == "error":
+                raise CloneError(
+                    "Local working directory has changes relative to the pinned SHA",
+                    sha=sha,
+                    cwd=str(local_source),
+                    hint="Use --dirty-policy=apply to include changes or --dirty-policy=ignore to skip this check.",
+                )
+            # dirty_policy == "apply"
+            _apply_local_changes(dest, local_source, sha)
 
     info("clone", sha=sha, step="bazel_clean", dest=str(dest))
     _run_bazel(["bazel", "clean"], cwd=dest)

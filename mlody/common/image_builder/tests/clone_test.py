@@ -196,3 +196,151 @@ class TestEnsureClone:
             ensure_clone(_SHA, _REMOTE, cache_root=_CACHE_ROOT)
 
         assert "lock" in exc_info.value.context
+
+
+class TestDirtyPolicy:
+    """Tests for dirty_policy behaviour on local CWD fallback."""
+
+    def _fake_run_local_fallback(
+        self,
+        sha: str,
+        remote: str,
+        local_cwd: "Path",
+        patch_output: str = "",
+        untracked_output: str = "",
+    ):
+        """Return a fake subprocess.run that:
+        - fails the remote clone (triggering local fallback)
+        - succeeds the local clone (creating .git/HEAD)
+        - returns patch/untracked data for the dirty checks
+        - succeeds bazel clean
+        """
+        from unittest.mock import MagicMock
+        from mlody.common.image_builder.phases.clone import _cache_dir
+
+        def fake_run(args: list, **kwargs):
+            mock = MagicMock()
+            mock.returncode = 0
+            mock.stdout = ""
+            mock.stderr = ""
+            # Remote clone fails
+            if args[0] == "git" and "--no-checkout" in args and remote in args:
+                mock.returncode = 1
+                mock.stderr = "fatal: repository not found"
+                return mock
+            # Local clone succeeds — create sentinel
+            if args[0] == "git" and "--no-checkout" in args and str(local_cwd) in args:
+                dest = _cache_dir(_CACHE_ROOT, sha)
+                git_dir = dest / ".git"
+                git_dir.mkdir(parents=True, exist_ok=True)
+                (git_dir / "HEAD").write_text("ref: refs/heads/main")
+                return mock
+            # git diff <sha> → return patch
+            if args[:2] == ["git", "diff"] and args[2] == sha:
+                mock.stdout = patch_output
+                return mock
+            # git ls-files --others
+            if args[:2] == ["git", "ls-files"]:
+                mock.stdout = untracked_output
+                return mock
+            # git apply - → apply patch
+            if args[:2] == ["git", "apply"]:
+                return mock
+            # git fetch / checkout / bazel
+            return mock
+
+        return fake_run
+
+    def test_dirty_policy_ignore_does_not_check_changes(self, fs: object) -> None:
+        _CACHE_ROOT.mkdir(parents=True)
+        local_cwd = Path("/local/repo")
+
+        diff_called: list[bool] = []
+
+        def fake_run(args: list, **kwargs):
+            mock = MagicMock()
+            mock.returncode = 0
+            mock.stdout = ""
+            mock.stderr = ""
+            if args[:2] == ["git", "diff"]:
+                diff_called.append(True)
+            if args[0] == "git" and "--no-checkout" in args and str(local_cwd) in args:
+                dest = _cache_dir(_CACHE_ROOT, _SHA)
+                (dest / ".git").mkdir(parents=True, exist_ok=True)
+                (dest / ".git" / "HEAD").write_text("ref: refs/heads/main")
+            if args[0] == "git" and "--no-checkout" in args and _REMOTE in args:
+                mock.returncode = 1
+            return mock
+
+        with patch("mlody.common.image_builder.phases.clone.subprocess.run", side_effect=fake_run):
+            ensure_clone(_SHA, _REMOTE, cache_root=_CACHE_ROOT, cwd=local_cwd, dirty_policy="ignore")
+
+        assert not diff_called
+
+    def test_dirty_policy_error_raises_when_changes_present(self, fs: object) -> None:
+        _CACHE_ROOT.mkdir(parents=True)
+        local_cwd = Path("/local/repo")
+
+        fake_run = self._fake_run_local_fallback(
+            _SHA, _REMOTE, local_cwd, patch_output="diff --git a/foo.py b/foo.py\n"
+        )
+
+        with pytest.raises(CloneError) as exc_info:
+            with patch("mlody.common.image_builder.phases.clone.subprocess.run", side_effect=fake_run):
+                ensure_clone(_SHA, _REMOTE, cache_root=_CACHE_ROOT, cwd=local_cwd, dirty_policy="error")
+
+        assert "changes" in exc_info.value.message.lower()
+
+    def test_dirty_policy_error_passes_when_no_changes(self, fs: object) -> None:
+        _CACHE_ROOT.mkdir(parents=True)
+        local_cwd = Path("/local/repo")
+
+        fake_run = self._fake_run_local_fallback(_SHA, _REMOTE, local_cwd)
+
+        with patch("mlody.common.image_builder.phases.clone.subprocess.run", side_effect=fake_run):
+            result = ensure_clone(_SHA, _REMOTE, cache_root=_CACHE_ROOT, cwd=local_cwd, dirty_policy="error")
+
+        assert result == _CLONE_DEST
+
+    def test_dirty_policy_apply_calls_git_apply(self, fs: object) -> None:
+        _CACHE_ROOT.mkdir(parents=True)
+        local_cwd = Path("/local/repo")
+
+        apply_calls: list[list[str]] = []
+        patch_data = "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
+
+        base_fake_run = self._fake_run_local_fallback(
+            _SHA, _REMOTE, local_cwd, patch_output=patch_data
+        )
+
+        def fake_run(args: list, **kwargs):
+            if args[:2] == ["git", "apply"]:
+                apply_calls.append(args)
+                mock = MagicMock()
+                mock.returncode = 0
+                mock.stdout = ""
+                mock.stderr = ""
+                return mock
+            return base_fake_run(args, **kwargs)
+
+        with patch("mlody.common.image_builder.phases.clone.subprocess.run", side_effect=fake_run):
+            result = ensure_clone(_SHA, _REMOTE, cache_root=_CACHE_ROOT, cwd=local_cwd, dirty_policy="apply")
+
+        assert result == _CLONE_DEST
+        assert any("apply" in a for a in apply_calls)
+
+    def test_dirty_policy_apply_copies_untracked_files(self, fs: object) -> None:
+        _CACHE_ROOT.mkdir(parents=True)
+        local_cwd = Path("/local/repo")
+        local_cwd.mkdir(parents=True)
+        # Create an untracked file in the fake CWD
+        (local_cwd / "new_file.py").write_text("# new")
+
+        fake_run = self._fake_run_local_fallback(
+            _SHA, _REMOTE, local_cwd, untracked_output="new_file.py\n"
+        )
+
+        with patch("mlody.common.image_builder.phases.clone.subprocess.run", side_effect=fake_run):
+            result = ensure_clone(_SHA, _REMOTE, cache_root=_CACHE_ROOT, cwd=local_cwd, dirty_policy="apply")
+
+        assert (result / "new_file.py").exists()

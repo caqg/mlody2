@@ -52,11 +52,26 @@ Exit codes:
         "`git remote get-url origin` in the current working directory."
     ),
 )
+@click.option(
+    "--dirty-policy",
+    "dirty_policy",
+    type=click.Choice(["ignore", "error", "apply"]),
+    default="ignore",
+    show_default=True,
+    help=(
+        "What to do when the local working directory has changes relative to "
+        "the pinned SHA (only applies when falling back to a local CWD clone). "
+        "ignore: proceed without touching the clone. "
+        "error: fail if any changes are detected. "
+        "apply: apply the diff and copy untracked files into the clone."
+    ),
+)
 def main(
     targets: tuple[str, ...],
     sha: str,
     registry: str,
     remote: str | None,
+    dirty_policy: str,
 ) -> None:
     """Build and push an OCI image from Bazel targets at a pinned commit SHA.
 
@@ -79,6 +94,7 @@ def main(
         cwd=Path(os.environ.get("BUILD_WORKING_DIRECTORY", str(Path.cwd()))),
         cache_root=None,
         auth=None,
+        dirty_policy=dirty_policy,  # type: ignore[arg-type]
     )
 
     try:

@@ -9,7 +9,7 @@ from mlody.common.image_builder.auth import DockerConfigAuth, RegistryAuth
 from mlody.common.image_builder.errors import BuilderError
 from mlody.common.image_builder.output import SuccessResult
 from mlody.common.image_builder.phases.build import run_bazel_build
-from mlody.common.image_builder.phases.clone import ensure_clone
+from mlody.common.image_builder.phases.clone import DirtyPolicy, ensure_clone
 from mlody.common.image_builder.phases.push import push_image
 from mlody.common.image_builder.phases.remote import resolve_remote
 from mlody.common.image_builder.phases.tags import derive_tags
@@ -24,6 +24,7 @@ class PipelineInputs:
     cwd: Path
     cache_root: Path | None
     auth: RegistryAuth | None
+    dirty_policy: DirtyPolicy = "ignore"
 
 
 def run(inputs: PipelineInputs) -> SuccessResult:
@@ -38,7 +39,9 @@ def run(inputs: PipelineInputs) -> SuccessResult:
     remote_url = resolve_remote(inputs.remote, inputs.cwd)
 
     # Phase 2: shallow clone at the pinned SHA, using cache if available
-    clone_dir = ensure_clone(inputs.sha, remote_url, inputs.cache_root, inputs.cwd)
+    clone_dir = ensure_clone(
+        inputs.sha, remote_url, inputs.cache_root, inputs.cwd, inputs.dirty_policy
+    )
 
     # Phase 3: build the combined OCI image target inside the clone
     run_bazel_build(clone_dir, inputs.targets)
