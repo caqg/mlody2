@@ -64,6 +64,17 @@ Exit codes:
     ),
 )
 @click.option(
+    "--base-image",
+    "base_image",
+    default="@distroless_python3",
+    show_default=True,
+    help=(
+        "Bazel label for the OCI base image (must be declared in the cloned "
+        "repo's MODULE.bazel via oci.pull). "
+        "e.g. @distroless_base, @distroless_python3."
+    ),
+)
+@click.option(
     "--dirty-policy",
     "dirty_policy",
     type=click.Choice(["ignore", "error", "apply"]),
@@ -82,6 +93,7 @@ def main(
     sha: str,
     registry: str,
     remote: str | None,
+    base_image: str,
     dirty_policy: str,
 ) -> None:
     """Build and push an OCI image from Bazel targets at a pinned commit SHA.
@@ -106,6 +118,7 @@ def main(
         cache_root=None,
         auth=None,
         dirty_policy=dirty_policy,  # type: ignore[arg-type]
+        base_image=base_image,
     )
 
     try:

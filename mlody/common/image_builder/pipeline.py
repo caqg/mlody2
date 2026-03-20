@@ -25,6 +25,7 @@ class PipelineInputs:
     cache_root: Path | None
     auth: RegistryAuth | None
     dirty_policy: DirtyPolicy = "ignore"
+    base_image: str = "@distroless_python3"
 
 
 def run(inputs: PipelineInputs) -> SuccessResult:
@@ -44,7 +45,7 @@ def run(inputs: PipelineInputs) -> SuccessResult:
     )
 
     # Phase 3: build the combined OCI image target inside the clone
-    run_bazel_build(inputs.sha, clone_result, inputs.targets)
+    run_bazel_build(inputs.sha, clone_result, inputs.targets, inputs.base_image)
 
     # Phase 4: derive one OCI tag per input target
     tags = derive_tags(inputs.targets, inputs.sha)

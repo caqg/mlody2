@@ -48,6 +48,7 @@ def _write_image_build(
     clone_dir: Path,
     targets: list[str],
     labels: dict[str, str],
+    base_image: str,
 ) -> None:
     """Write a BUILD.bazel for OCI image assembly into the clone workspace.
 
@@ -76,7 +77,7 @@ pkg_tar(
 
 oci_image(
     name = "image",
-    base = "@distroless_base",
+    base = "{base_image}",
     tars = [":layer"],
     labels = {{
 {labels_starlark}
@@ -90,6 +91,7 @@ def run_bazel_build(
     sha: str,
     clone_result: CloneResult,
     targets: list[str],
+    base_image: str = "@distroless_python3",
 ) -> BazelResult:
     """Build the combined OCI image inside the clone directory.
 
@@ -102,7 +104,7 @@ def run_bazel_build(
     """
     clone_dir = clone_result.path
     labels = _build_labels(sha, clone_result)
-    _write_image_build(clone_dir, targets, labels)
+    _write_image_build(clone_dir, targets, labels, base_image)
 
     target = f"//{_DYN_PKG}:image"
     cmd = ["bazel", "build", target]

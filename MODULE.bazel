@@ -53,4 +53,15 @@ oci.pull(
     ],
 )
 use_repo(oci, "distroless_base", "distroless_base_linux_amd64", "distroless_base_linux_arm64")
+oci.pull(
+    name = "distroless_python3",
+    # gcr.io/distroless/python3-debian12 pinned at a stable digest for reproducibility.
+    digest = "sha256:e19b29c8473bed88f8b6e31e49d1133d1bdb2bf9c0af7e82d0e7434f7c036a63",
+    image = "gcr.io/distroless/python3-debian12",
+    platforms = [
+        "linux/amd64",
+        "linux/arm64",
+    ],
+)
+use_repo(oci, "distroless_python3", "distroless_python3_linux_amd64", "distroless_python3_linux_arm64")
 ##
