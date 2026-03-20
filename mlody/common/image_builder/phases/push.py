@@ -70,10 +70,13 @@ def push_image(
             )
 
         image_references.append(reference)
-        # Extract digest from crane output (sha256:...)
+        # crane push outputs "<ref>@sha256:<digest>" on the last stdout line.
         for line in result.stdout.splitlines():
-            if line.startswith("sha256:"):
-                digest = line.strip()
+            line = line.strip()
+            if "@sha256:" in line:
+                digest = line.split("@sha256:", 1)[1]
+                if digest:
+                    digest = "sha256:" + digest
 
     if digest is None:
         raise PushError(
