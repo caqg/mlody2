@@ -25,18 +25,26 @@ class BazelResult:
 
 
 def _target_subdir(label: str) -> str:
-    """Derive the subdirectory name for a target's outputs inside the image.
+    """Derive the subdirectory path for a target's outputs inside the image.
 
-    Uses the name component of the label (the part after ':'), or the last
-    path segment if no colon is present.
+    Uses the full package path + target name to guarantee uniqueness across
+    the workspace, mirroring the source tree layout.
 
-      //mlody/cli:mlody              -> mlody
-      //repo/smoketest/python/simple:simple  -> simple
-      //foo/bar                      -> bar
+      //mlody/cli:mlody              -> mlody/cli/mlody
+      //repo/smoketest/python/simple:simple  -> repo/smoketest/python/simple/simple
+      @repo//pkg:name                -> pkg/name
     """
+    # Strip leading @ repo qualifier and //
+    label = label.lstrip("@")
+    if "//" in label:
+        label = label.split("//", 1)[1]
+    # Split package path and target name
     if ":" in label:
-        return label.split(":")[-1]
-    return label.rstrip("/").split("/")[-1]
+        pkg, name = label.split(":", 1)
+    else:
+        pkg = label.rstrip("/")
+        name = pkg.split("/")[-1]
+    return f"{pkg}/{name}" if pkg else name
 
 
 def _safe_rule_name(subdir: str) -> str:
