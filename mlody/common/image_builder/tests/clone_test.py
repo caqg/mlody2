@@ -344,3 +344,60 @@ class TestDirtyPolicy:
             result = ensure_clone(_SHA, _REMOTE, cache_root=_CACHE_ROOT, cwd=local_cwd, dirty_policy="apply")
 
         assert (result / "new_file.py").exists()
+
+    def test_dirty_policy_error_raises_on_cache_hit_with_changes(self, fs: object) -> None:
+        """error policy must fire even when the clone is already cached."""
+        _CACHE_ROOT.mkdir(parents=True)
+        # Pre-populate a valid cached clone
+        (_CLONE_DEST / ".git").mkdir(parents=True)
+        (_CLONE_DEST / ".git" / "HEAD").write_text("ref: refs/heads/main")
+
+        def fake_run(args: list, **kwargs):
+            mock = MagicMock()
+            mock.returncode = 0
+            mock.stdout = ""
+            mock.stderr = ""
+            if args[:2] == ["git", "diff"]:
+                mock.stdout = "diff --git a/foo.py b/foo.py\n"
+            if args[:2] == ["git", "ls-files"]:
+                mock.stdout = ""
+            return mock
+
+        with pytest.raises(CloneError) as exc_info:
+            with patch("mlody.common.image_builder.phases.clone.subprocess.run", side_effect=fake_run):
+                ensure_clone(_SHA, _REMOTE, cache_root=_CACHE_ROOT, dirty_policy="error")
+
+        assert "changes" in exc_info.value.message.lower()
+
+    def test_dirty_policy_apply_invalidates_cache_when_changes_present(self, fs: object) -> None:
+        """apply policy must discard a stale cached clone and re-clone."""
+        _CACHE_ROOT.mkdir(parents=True)
+        # Pre-populate a valid cached clone
+        (_CLONE_DEST / ".git").mkdir(parents=True)
+        (_CLONE_DEST / ".git" / "HEAD").write_text("ref: refs/heads/main")
+
+        clone_called: list[bool] = []
+
+        def fake_run(args: list, **kwargs):
+            mock = MagicMock()
+            mock.returncode = 0
+            mock.stdout = ""
+            mock.stderr = ""
+            if args[:2] == ["git", "diff"]:
+                mock.stdout = "diff --git a/foo.py b/foo.py\n"
+            if args[:2] == ["git", "ls-files"]:
+                mock.stdout = ""
+            if args[0] == "git" and "--no-checkout" in args:
+                clone_called.append(True)
+                # Recreate the sentinel so cache check passes after re-clone
+                (_CLONE_DEST / ".git").mkdir(parents=True, exist_ok=True)
+                (_CLONE_DEST / ".git" / "HEAD").write_text("ref: refs/heads/main")
+            if args[:2] == ["git", "apply"]:
+                pass  # apply succeeds
+            return mock
+
+        with patch("mlody.common.image_builder.phases.clone.subprocess.run", side_effect=fake_run):
+            ensure_clone(_SHA, _REMOTE, cache_root=_CACHE_ROOT, dirty_policy="apply")
+
+        # The cached clone was invalidated, so a fresh clone must have run
+        assert clone_called

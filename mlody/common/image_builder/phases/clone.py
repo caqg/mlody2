@@ -83,7 +83,8 @@ def _clone_from(source: str, sha: str, dest: Path) -> None:
 def _local_changes(cwd: Path, sha: str) -> tuple[str, list[str]]:
     """Return (patch, untracked_paths) for changes in cwd relative to sha.
 
-    patch           — unified diff output of `git diff <sha>` (empty if none)
+    patch           — unified diff output of `git diff <sha>` (empty if none
+                      or if sha is unknown locally)
     untracked_paths — relative paths of untracked files (empty if none)
     """
     diff = subprocess.run(
@@ -155,10 +156,12 @@ def ensure_clone(
     same SHA.
 
     dirty_policy controls what happens when the local CWD has changes
-    relative to the pinned SHA (only relevant when the local fallback is used):
+    relative to the pinned SHA:
       "ignore" — proceed without touching the clone (default)
       "error"  — raise CloneError if any changes are detected
-      "apply"  — apply the diff and copy untracked files into the clone
+      "apply"  — apply the diff and copy untracked files into the clone;
+                 if a cached clone already exists it is invalidated first
+                 so changes are applied to a clean base
 
     Returns the path to the clone directory.
     Raises CloneError on any failure.
@@ -166,8 +169,28 @@ def ensure_clone(
     root = cache_root if cache_root is not None else _CACHE_ROOT_DEFAULT
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
 
+    local_source = cwd if cwd is not None else Path.cwd()
     dest = _cache_dir(root, sha)
-    used_local = False
+
+    # Evaluate dirty state upfront — before any cache decision — so that
+    # a stale cached clone does not silently hide local modifications.
+    patch: str = ""
+    untracked: list[str] = []
+    if dirty_policy != "ignore":
+        patch, untracked = _local_changes(local_source, sha)
+        has_changes = bool(patch or untracked)
+        if has_changes and dirty_policy == "error":
+            raise CloneError(
+                "Local working directory has changes relative to the pinned SHA",
+                sha=sha,
+                cwd=str(local_source),
+                hint="Use --dirty-policy=apply to include changes or --dirty-policy=ignore to skip this check.",
+            )
+        if has_changes and dirty_policy == "apply" and _check_cache(root, sha):
+            # The cached clone pre-dates the local changes; remove it so the
+            # clone phase produces a clean base to apply the diff onto.
+            info("clone", sha=sha, cache="invalidate", reason="dirty-policy=apply with local changes")
+            shutil.rmtree(dest, ignore_errors=True)
 
     if _check_cache(root, sha):
         info("clone", sha=sha, cache="hit", dest=str(dest))
@@ -184,11 +207,9 @@ def ensure_clone(
                     # SHA not on remote — try the local working directory.
                     shutil.rmtree(dest, ignore_errors=True)
                     dest.mkdir(parents=True, exist_ok=True)
-                    local_source = cwd if cwd is not None else Path.cwd()
                     info("clone", sha=sha, source="local", local_source=str(local_source))
                     try:
                         _clone_from(str(local_source), sha, dest)
-                        used_local = True
                     except CloneError:
                         shutil.rmtree(dest, ignore_errors=True)
                         raise
@@ -197,20 +218,8 @@ def ensure_clone(
         finally:
             _release_lock(lock)
 
-    if used_local and dirty_policy != "ignore":
-        local_source = cwd if cwd is not None else Path.cwd()
-        patch, untracked = _local_changes(local_source, sha)
-        has_changes = bool(patch or untracked)
-        if has_changes:
-            if dirty_policy == "error":
-                raise CloneError(
-                    "Local working directory has changes relative to the pinned SHA",
-                    sha=sha,
-                    cwd=str(local_source),
-                    hint="Use --dirty-policy=apply to include changes or --dirty-policy=ignore to skip this check.",
-                )
-            # dirty_policy == "apply"
-            _apply_local_changes(dest, local_source, sha)
+    if dirty_policy == "apply" and (patch or untracked):
+        _apply_local_changes(dest, local_source, sha)
 
     info("clone", sha=sha, step="bazel_clean", dest=str(dest))
     _run_bazel(["bazel", "clean"], cwd=dest)
