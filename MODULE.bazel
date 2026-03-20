@@ -64,4 +64,17 @@ oci.pull(
     ],
 )
 use_repo(oci, "distroless_python3", "distroless_python3_linux_amd64", "distroless_python3_linux_arm64")
+oci.pull(
+    name = "debian_slim",
+    # docker.io/library/debian:12-slim — has bash, needed for aspect_rules_py
+    # launchers which are bash scripts that set up the hermetic Python venv.
+    digest = "sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0f2837acbf89ab020a",
+    image = "debian",
+    tag = "12-slim",
+    platforms = [
+        "linux/amd64",
+        "linux/arm64",
+    ],
+)
+use_repo(oci, "debian_slim", "debian_slim_linux_amd64", "debian_slim_linux_arm64")
 ##

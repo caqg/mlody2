@@ -25,7 +25,7 @@ class PipelineInputs:
     cache_root: Path | None
     auth: RegistryAuth | None
     dirty_policy: DirtyPolicy = "ignore"
-    base_image: str = "@distroless_python3"
+    base_image: str = "@debian_slim"
 
 
 def run(inputs: PipelineInputs) -> SuccessResult:

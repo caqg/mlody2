@@ -188,7 +188,7 @@ def run_bazel_build(
     sha: str,
     clone_result: CloneResult,
     targets: list[str],
-    base_image: str = "@distroless_python3",
+    base_image: str = "@debian_slim",
 ) -> BazelResult:
     """Build the combined OCI image inside the clone directory.
 

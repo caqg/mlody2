@@ -66,12 +66,12 @@ Exit codes:
 @click.option(
     "--base-image",
     "base_image",
-    default="@distroless_python3",
+    default="@debian_slim",
     show_default=True,
     help=(
         "Bazel label for the OCI base image (must be declared in the cloned "
         "repo's MODULE.bazel via oci.pull). "
-        "e.g. @distroless_base, @distroless_python3."
+        "e.g. @debian_slim, @distroless_base, @distroless_python3."
     ),
 )
 @click.option(
