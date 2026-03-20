@@ -45,7 +45,7 @@ oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
 oci.pull(
     name = "distroless_base",
     # gcr.io/distroless/base pinned at a stable digest for reproducibility.
-    digest = "sha256:ccaef5ee2f1850270d453fdf700a5392604105cc0c41f0a6d5b77b44b8d134be",
+    digest = "sha256:b0510424f0c7c1d6fdae75ef5c1d349fa72d312e96f69728fad6beb04755b8b4",
     image = "gcr.io/distroless/base",
     platforms = [
         "linux/amd64",
