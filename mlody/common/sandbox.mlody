@@ -8,13 +8,6 @@ load("//mlody/common/values.mlody")
 load("//mlody/common/action.mlody")
 load("//mlody/common/task.mlody")
 
-action(
-    name    = "train_model",
-    inputs  = [],
-    outputs = [],
-    config  = {"epochs": 10, "lr": 0.001, "optimizer": "adam"},
-)
-
 print("===================================")
 
 world = "World"

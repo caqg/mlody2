@@ -1,0 +1,21 @@
+load("//build/bzl:python.bzl", "o_py_binary", "o_py_library")
+
+o_py_binary(
+    name = "model-download",
+    srcs = ["model-download.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "@pip//huggingface_hub",
+        "@pip//requests",
+    ],
+)
+
+o_py_library(
+    name = "huggingface_lib",
+    srcs = ["model-download.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "@pip//huggingface_hub",
+        "@pip//requests",
+    ],
+)

@@ -1,0 +1,40 @@
+bazel_dep(name = "toolchains_llvm", version = "1.6.0")
+bazel_dep(name = "rules_cc", version = "0.2.17")
+
+# TODO: support LLVM. Doesn't work at all with bazel 8, but even with 7.4.0 ends up in problems with libraries. Maybe is  systroot thing.
+# bazel_dep(name = "toolchains_llvm", version = "1.2.0")
+
+# Configure and register the toolchain.
+llvm = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm")
+llvm.toolchain(
+    llvm_version = "19.1.1",
+)
+use_repo(llvm, "llvm_toolchain")
+use_repo(llvm, "llvm_toolchain_llvm") 
+
+register_toolchains("@llvm_toolchain//:all")
+
+bazel_dep(name = "googletest", version = "1.17.0")
+bazel_dep(name = "google_benchmark", version = "1.9.4")
+bazel_dep(name = "catch2", version = "3.10.0")
+bazel_dep(name = "imgui", version = "1.91.8")
+# git_override(
+#         module_name = "imgui",
+#         remote = "https://github.com/ocornut/imgui.git",
+#         branch = "docking",
+#     )
+bazel_dep(name = "glfw", version = "3.3.9")
+#bazel_dep(name = "glew", version = "2.2.0") NOT WORKING
+
+#bazel_dep(name = "skia", version = "137.0.0")
+#bazel_dep(name="skia", version="")
+#git_override(
+ #module_name="skia",
+ #commit = "99822dd8249dfe3773cbd7ca56bb1767bf92fa22",
+ #remote = "https://skia.googlesource.com/skia",
+# remote="https://github.com/google/skia.git",
+# commit="1d5d35661e187ac054735da5cc30f7e8f185b763"
+#)
+#local_path_override(
+ #module_name="skia_user_config",
+ #path="third_party/skia_user_config")
