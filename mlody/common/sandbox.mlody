@@ -2,7 +2,7 @@
 
 ## Roots
 load("//mlody/core/builtins.mlody", "root")
-load("@common//:types.mlody")
+load("@common//:types.mlody", "typedef", "integer", "string", "map", "field", "vector")
 load("//mlody/common/locations.mlody")
 load("//mlody/common/values.mlody")
 load("//mlody/common/action.mlody")

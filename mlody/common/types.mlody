@@ -159,7 +159,17 @@ typedef(
         "max_length":   attr(type="integer", mandatory=False),
     },
 )
+
 typedef(name="tuple", base=aggregate())
+
+# typedef(name="struct",
+# 	base=aggregate(),
+# 	attrs = {
+# 	    "fields": attr(type="field_list", mandatory=False),
+# 	    "required": attr(type=vector(element_type="string")),
+# 	    "strict": attr(type="bool"),
+# 	)
+
 typedef(
     name = "map",
     base = aggregate(),
@@ -183,3 +193,19 @@ typedef(
 
 # ---- mlody built-in types ----
 typedef(name="mlody-workspace", description="A snapshot of an mlody workspace.")
+
+# typedef(name="mlody-folder",
+# 	description="A file system folder containing MLody source files or other MLody folders"
+# 	base = struct(fields=[
+# 	    field("subfolders", type=vector(element_type=":mlody-folder")),
+# 	    field("files", type=vector(element_type=":mlody-source")),
+# 	],
+# )
+
+# typedef(name="mlody-source",
+# 	description="A MLody source file containing MLody entities"
+# 	base = struct(fields=[
+# 	    field("entities", type=vector(element_type="to be decided")),
+# 	],
+# )
+
