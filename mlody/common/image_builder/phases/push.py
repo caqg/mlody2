@@ -41,7 +41,7 @@ def push_image(
     The image digest is extracted from crane's stdout (sha256:... line).
     Credentials are sourced exclusively from auth.env_vars().
 
-    Raises PushError if crane is not on PATH or if any tag push fails.
+    Raises PushError if bazel or crane is unavailable or if any tag push fails.
     """
     image_layout = clone_dir / _IMAGE_LAYOUT_RELPATH
     env = {**os.environ, **auth.env_vars()}
@@ -52,7 +52,7 @@ def push_image(
         reference = f"{registry}:{tag}"
         info("push", tag=tag, registry=registry)
 
-        cmd = ["crane", "push", str(image_layout), reference]
+        cmd = ["bazel", "run", "@multitool//tools/crane:crane", "--", "push", str(image_layout), reference]
         result = subprocess.run(
             cmd,
             cwd=clone_dir,
