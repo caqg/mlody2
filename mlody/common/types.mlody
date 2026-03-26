@@ -1,12 +1,6 @@
 load("//mlody/core/rule.mlody", "rule")
 load("//mlody/common/attrs.mlody", "attr", "field", "extend_attrs", "_make_factory", "_validate_attr_value", "_PRIMITIVE_KINDS", "generic_validate", "_builtin_bool", "_builtin_float", "_builtin_tuple", "_PRIMITIVE_VALIDATORS", "_validate_map", "_validate_tuple")
 
-# Preserve the sandbox struct() builtin before typedef(name="struct") shadows it.
-# After defining mlody-folder and mlody-source (which need the struct factory),
-# we restore struct to the builtin so callers that load() this file unqualified
-# still get the real struct() constructor.
-_struct_builtin = struct
-
 
 def repr(*, name, type, to_canonical, from_canonical=None):
     """Construct a representation descriptor for use in typedef(representations=[...])."""
@@ -271,7 +265,7 @@ typedef(
     name = "vector",
     base = aggregate(),
     attrs = {
-        "element_type": attr(type="type",    mandatory=False),
+        "element_type": attr(type="type_ref", mandatory=False),
         "min_length":   attr(type="integer", mandatory=False),
         "max_length":   attr(type="integer", mandatory=False),
     },
@@ -280,18 +274,13 @@ typedef(
 typedef(name="tuple", base=aggregate())
 
 typedef(
-    name = "struct",
+    name = "record",
     base = aggregate(),
     attrs = {
         "fields": attr(type="field_list", mandatory=False),
         "strict":  attr(type="bool",       mandatory=False),
     },
 )
-
-# Save the struct typedef factory under a stable alias so test code (and
-# .mlody consumers that load() this file unqualified) can call it as struct_t().
-# The struct() builtin is restored below; struct_t() remains the type factory.
-struct_t = struct
 
 typedef(
     name = "map",
@@ -317,25 +306,20 @@ typedef(
 # ---- mlody built-in types ----
 typedef(name="mlody-workspace", description="A snapshot of an mlody workspace.")
 
-# typedef(name="mlody-folder") — provisional; field schema deferred to next design step
 typedef(
     name = "mlody-folder",
     description = "A file system folder containing mlody source files or other mlody folders.",
-    base = struct(fields = [
-        field(name = "subfolders", type = vector()),   # element_type=mlody-folder deferred
-        field(name = "files",      type = vector()),   # element_type=mlody-source deferred
+    base = record(fields = [
+        field(name = "subfolders", type = vector(element_type=":mlody-folder")),
+        field(name = "files",      type = vector(element_type=":mlody-source")),
     ]),
 )
 
-# typedef(name="mlody-source") — provisional; field schema deferred to next design step
 typedef(
     name = "mlody-source",
     description = "A mlody source file containing mlody entities.",
-    base = struct(fields = [
-        field(name = "entities", type = vector()),     # element_type TBD
+    base = record(fields = [
+        field(name = "entities", type = map(key_type=string())),
     ]),
 )
 
-# Restore the struct() builtin so callers that load() this file unqualified
-# still get the real Starlark struct() constructor, not the typedef factory.
-struct = _struct_builtin

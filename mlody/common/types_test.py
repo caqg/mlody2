@@ -1362,20 +1362,15 @@ def test_abstract_type_not_inherited_by_concrete() -> None:
 
 
 def test_struct_typedef_registered() -> None:
-    """After loading types.mlody, 'struct' is registered in ev._types_by_name."""
+    """After loading types.mlody, 'record' is registered in ev._types_by_name."""
     ev = _eval("")
-    assert "struct" in ev._types_by_name
+    assert "record" in ev._types_by_name
 
 
 def test_struct_validates_dict_with_fields() -> None:
-    """struct_t(fields=[field(...)]).validator accepts a dict with the right shape.
-
-    Uses struct_t() (the typedef factory) rather than struct() (the Starlark builtin)
-    to avoid the naming collision: struct() was restored to the builtin after the
-    mlody-folder/mlody-source definitions in types.mlody.
-    """
+    """record(fields=[field(...)]).validator accepts a dict with the right shape."""
     ev = _eval("""\
-        t = struct_t(fields=[field(name="x", type=float()), field(name="y", type=float())])
+        t = record(fields=[field(name="x", type=float()), field(name="y", type=float())])
         builtins.register("root", struct(name="r", t=t))
     """)
     t = ev._roots_by_name["r"].t  # type: ignore[attr-defined]
@@ -1383,9 +1378,9 @@ def test_struct_validates_dict_with_fields() -> None:
 
 
 def test_struct_rejects_missing_required_field() -> None:
-    """struct_t(fields=[...]).validator raises ValueError when a required field is absent."""
+    """record(fields=[...]).validator raises ValueError when a required field is absent."""
     ev = _eval("""\
-        t = struct_t(fields=[field(name="x", type=float()), field(name="y", type=float())])
+        t = record(fields=[field(name="x", type=float()), field(name="y", type=float())])
         builtins.register("root", struct(name="r", t=t))
     """)
     t = ev._roots_by_name["r"].t  # type: ignore[attr-defined]
@@ -1394,9 +1389,9 @@ def test_struct_rejects_missing_required_field() -> None:
 
 
 def test_struct_strict_rejects_extra_key() -> None:
-    """struct_t(fields=[...], strict=True) raises ValueError on unexpected keys."""
+    """record(fields=[...], strict=True) raises ValueError on unexpected keys."""
     ev = _eval("""\
-        t = struct_t(fields=[field(name="x", type=float())], strict=True)
+        t = record(fields=[field(name="x", type=float())], strict=True)
         builtins.register("root", struct(name="r", t=t))
     """)
     t = ev._roots_by_name["r"].t  # type: ignore[attr-defined]
@@ -1415,6 +1410,51 @@ def test_mlody_source_typedef_registered() -> None:
     """After loading types.mlody, 'mlody-source' is registered in ev._types_by_name."""
     ev = _eval("")
     assert "mlody-source" in ev._types_by_name
+
+
+def test_deferred_label_element_type_resolution() -> None:
+    """vector(element_type=':string') resolves the label lazily and validates elements."""
+    ev = _eval("""\
+        t = vector(element_type=":string")
+        builtins.register("root", struct(name="r", t=t))
+    """)
+    t = ev._roots_by_name["r"].t  # type: ignore[attr-defined]
+    assert t.validator(["hello", "world"])  # type: ignore[attr-defined]
+    with pytest.raises(TypeError):
+        t.validator([1, 2])  # type: ignore[attr-defined]
+
+
+def test_mlody_source_entities_accepts_dict() -> None:
+    """mlody-source validator accepts a dict for the entities field."""
+    ev = _eval("")
+    src_type = ev._types_by_name["mlody-source"]
+    assert src_type.validator({"entities": {}})
+    assert src_type.validator({"entities": {"action/train:run": object()}})
+
+
+def test_mlody_source_entities_rejects_non_dict() -> None:
+    """mlody-source validator rejects a non-dict value for entities."""
+    ev = _eval("")
+    src_type = ev._types_by_name["mlody-source"]
+    with pytest.raises((TypeError, ValueError)):
+        src_type.validator({"entities": []})
+
+
+def test_mlody_folder_files_accepts_mlody_source_dicts() -> None:
+    """mlody-folder validator accepts a files list of valid mlody-source dicts."""
+    ev = _eval("")
+    folder_type = ev._types_by_name["mlody-folder"]
+    valid_source = {"entities": {}}
+    assert folder_type.validator({"subfolders": [], "files": [valid_source]})
+
+
+def test_mlody_folder_subfolders_accepts_nested_folder() -> None:
+    """mlody-folder.subfolders resolves :mlody-folder lazily and validates recursively."""
+    ev = _eval("")
+    folder_type = ev._types_by_name["mlody-folder"]
+    inner = {"subfolders": [], "files": []}
+    outer = {"subfolders": [inner], "files": []}
+    assert folder_type.validator(outer)
 
 
 # ---------------------------------------------------------------------------

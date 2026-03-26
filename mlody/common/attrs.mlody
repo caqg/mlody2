@@ -14,7 +14,7 @@ _PRIMITIVE_VALIDATORS = {
 }
 
 # Kinds whose validation is handled by generic_validate (used in extend_attrs).
-_PRIMITIVE_KINDS = {"integer", "string", "float", "vector", "tuple", "map", "struct"}
+_PRIMITIVE_KINDS = {"integer", "string", "float", "vector", "tuple", "map", "record"}
 
 
 def field(*, name, type, mandatory=True):
@@ -140,7 +140,7 @@ def generic_validate(kind: str, attrs: dict[str, python.Any], value: python.Any)
         _validate_tuple(attrs, value)
     elif kind == "map":
         _validate_map(attrs, value)
-    elif kind == "struct":
+    elif kind == "record":
         _validate_map(attrs, value)
     else:
         raise NotImplementedError(f"generic validator for kind={kind!r} not implemented")
@@ -199,6 +199,8 @@ def _validate_vector(attrs: dict[str, python.Any], value: python.Any) -> None:
         raise ValueError(f"vector len {len(value)} > max_length {max_len}")
     el_type = attrs.get("element_type")
     if el_type != None:
+        if isinstance(el_type, str):
+            el_type = builtins.lookup("type", el_type)
         for i, el in enumerate(value):
             validator = python.getattr(el_type, "validator", None)
             if validator != None:
