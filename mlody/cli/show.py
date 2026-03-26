@@ -18,7 +18,6 @@ from mlody.resolver.errors import WorkspaceResolutionError
 _logger = logging.getLogger(__name__)
 
 
-
 def show_fn(
     label: str,
     monorepo_root: Path,
@@ -99,7 +98,17 @@ def show(ctx: click.Context, targets: tuple[str, ...]) -> None:
             if resolved_sha is not None:
                 _logger.debug("Resolved %s to %s", target.split("|")[0], resolved_sha)
 
+            print("====")
+            for k in workspace.evaluator.all.keys():
+                print(f"> {k}")
+            print(_parse_label_struct(target))
+            print("--")
             click.echo(pretty_repr(_parse_label_struct(target)))
+            print(".")
+            click.echo(
+                pretty_repr(workspace.evaluator.all[("root", "mlody/roots", "lexica")])
+            )
+            print("====")
             _committoid, inner_label = _parse_inner(target)
             value = force(workspace.resolve(inner_label))
         except WorkspaceLoadError as exc:
@@ -117,7 +126,9 @@ def show(ctx: click.Context, targets: tuple[str, ...]) -> None:
                 available = list(workspace.root_infos.keys())
                 if available:
                     click.echo(
-                        click.style(f"Available roots: {', '.join(available)}", fg="red"),
+                        click.style(
+                            f"Available roots: {', '.join(available)}", fg="red"
+                        ),
                         err=True,
                     )
             continue
@@ -126,15 +137,15 @@ def show(ctx: click.Context, targets: tuple[str, ...]) -> None:
             click.echo(click.style(f"Error: {exc}", fg="red"), err=True)
             continue
 
+        print("-------------------------------")
         click.echo(_format_value(value))
+        print("-------------------------------")
 
     if has_error:
         sys.exit(1)
 
 
-def _show_with_legacy_workspace(
-    ctx: click.Context, targets: tuple[str, ...]
-) -> None:
+def _show_with_legacy_workspace(ctx: click.Context, targets: tuple[str, ...]) -> None:
     """Handle the legacy test injection path where ctx.obj['workspace'] is set.
 
     This path is used by existing tests that inject a pre-built workspace mock.

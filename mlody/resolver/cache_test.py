@@ -125,6 +125,14 @@ class TestWriteMetadata:
         assert data["resolved_sha"] == SHA
         assert data["repo"] == "git@github.com:org/repo.git"
         assert "resolved_at" in data
+        assert data["local_only"] is False
+
+    def test_local_only_flag_persisted(self, tmp_path: Path) -> None:
+        write_metadata(tmp_path, SHA, requested_ref="my-branch", repo_url="url", local_only=True)
+
+        meta_path = tmp_path / f"{SHA}-meta.json"
+        data = json.loads(meta_path.read_text())
+        assert data["local_only"] is True
 
     def test_does_not_overwrite_existing_metadata(self, tmp_path: Path) -> None:
         meta_path = tmp_path / f"{SHA}-meta.json"

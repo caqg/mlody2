@@ -40,6 +40,7 @@ Core Concepts:
   collects registered objects in its internal state (e.g. ``self.roots``),
   accessible after evaluation completes.
 """
+
 import ast
 import builtins
 import functools
@@ -89,6 +90,7 @@ def _validate_loads_at_top(script_content: str, file_path: Path) -> None:
 
 class Named(Protocol):
     """A protocol for objects with a 'name' attribute."""
+
     name: str
 
 
@@ -102,7 +104,7 @@ def _sandbox_type(obj: object) -> str:
     """
     if obj is None:
         return "NoneType"
-    if isinstance(obj, bool):   # bool precedes int — bool is a subclass of int
+    if isinstance(obj, bool):  # bool precedes int — bool is a subclass of int
         return "bool"
     if isinstance(obj, int):
         return "int"
@@ -140,38 +142,38 @@ PYTHON_SPECIFIC_BUILTINS = struct(
 # `isinstance` is safe: scripts can only test against classes already in the sandbox.
 # Exception classes (ValueError, TypeError, NotImplementedError) are safe to raise/catch.
 SAFE_BUILTINS: dict[str, Any] = {  # pyright: ignore[reportExplicitAny]
-    'abs': builtins.abs,
-    'all': builtins.all,
-    'any': builtins.any,
-    'bool': builtins.bool,
-    'dict': builtins.dict,
-    'enumerate': builtins.enumerate,
-    'float': builtins.float,
-    'int': builtins.int,
-    'len': builtins.len,
-    'list': builtins.list,
-    'max': builtins.max,
-    'min': builtins.min,
-    'print': builtins.print,
-    'range': builtins.range,
-    'repr': builtins.repr,
-    'reversed': builtins.reversed,
-    'set': builtins.set,
-    'sorted': builtins.sorted,
-    'isinstance': builtins.isinstance,
-    'str': builtins.str,
-    'struct': struct,
-    'tuple': builtins.tuple,
-    'type': _sandbox_type,
-    'ValueError': ValueError,
-    'TypeError': TypeError,
-    'NotImplementedError': NotImplementedError,
-    'zip': builtins.zip,
-    'None': None,
-    'True': True,
-    'False': False,
-    'Struct': Struct,
-    'python': PYTHON_SPECIFIC_BUILTINS,
+    "abs": builtins.abs,
+    "all": builtins.all,
+    "any": builtins.any,
+    "bool": builtins.bool,
+    "dict": builtins.dict,
+    "enumerate": builtins.enumerate,
+    "float": builtins.float,
+    "int": builtins.int,
+    "len": builtins.len,
+    "list": builtins.list,
+    "max": builtins.max,
+    "min": builtins.min,
+    "print": builtins.print,
+    "range": builtins.range,
+    "repr": builtins.repr,
+    "reversed": builtins.reversed,
+    "set": builtins.set,
+    "sorted": builtins.sorted,
+    "isinstance": builtins.isinstance,
+    "str": builtins.str,
+    "struct": struct,
+    "tuple": builtins.tuple,
+    "type": _sandbox_type,
+    "ValueError": ValueError,
+    "TypeError": TypeError,
+    "NotImplementedError": NotImplementedError,
+    "zip": builtins.zip,
+    "None": None,
+    "True": True,
+    "False": False,
+    "Struct": Struct,
+    "python": PYTHON_SPECIFIC_BUILTINS,
 }
 
 
@@ -187,13 +189,17 @@ class Evaluator:
     """
     The core engine that prepares a sandboxed environment and executes a user script.
     """
+
     def __init__(
         self,
         root: Path,
         init_files: list[Path] | None = None,
         print_fn: Callable[..., None] = builtins.print,
         extra_ctx: Struct | None = None,
-        line_range_extractor: Callable[[Path, str], dict[tuple[str, str], tuple[int, int]]] | None = None,
+        line_range_extractor: Callable[
+            [Path, str], dict[tuple[str, str], tuple[int, int]]
+        ]
+        | None = None,
     ) -> None:
         self.loaded_files: set[Path] = set()
         self._eval_stack: list[Path] = []
@@ -215,9 +221,10 @@ class Evaluator:
             _sentinel: Named = Struct(  # type: ignore[assignment]
                 kind="type", type=_pname, name=_pname, attributes={}, _allowed_attrs={}
             )
-            self.types[_pname] = _sentinel          # bare key — no file ctx at init time
+            self.types[_pname] = _sentinel  # bare key — no file ctx at init time
             self._types_by_name[_pname] = _sentinel
-            self.all[f"type/{_pname}"] = _sentinel
+            #            self.all[f"type/{_pname}"] = _sentinel
+            self.all[("type", None, _pname)] = _sentinel
         self._module_globals: dict[Path, dict[str, Any]] = {}  # pyright: ignore[reportExplicitAny]
         # Override print in the sandbox so callers can suppress stdout writes
         # (e.g. the LSP server, which uses stdout as its JSON-RPC transport).
@@ -245,33 +252,36 @@ class Evaluator:
         if self._line_range_extractor is not None:
             sr = self._file_ranges.get(ctx.file, {}).get((kind, thing.name))
             if sr is not None and isinstance(thing, Struct):
-                thing = Struct(**thing.as_mapping(), _source_range=Struct(  # type: ignore[assignment]
-                    filepath=str(rel_file), start_line=sr[0], end_line=sr[1]
-                ))
+                thing = Struct(
+                    **thing.as_mapping(),
+                    _source_range=Struct(  # type: ignore[assignment]
+                        filepath=str(rel_file), start_line=sr[0], end_line=sr[1]
+                    ),
+                )
 
-        if kind == 'root':
+        if kind == "root":
             self.roots[key] = thing
             self._roots_by_name[thing.name] = thing
-        elif kind == 'type':
+        elif kind == "type":
             self.types[key] = thing
             self._types_by_name[thing.name] = thing
-        elif kind == 'location':
+        elif kind == "location":
             self.locations[key] = thing
             self._locations_by_name[thing.name] = thing
-        elif kind == 'value':
+        elif kind == "value":
             self.values[key] = thing
             self._values_by_name[thing.name] = thing
-        elif kind == 'action':
+        elif kind == "action":
             self.actions[key] = thing
             self._actions_by_name[thing.name] = thing
-        elif kind == 'task':
+        elif kind == "task":
             self.tasks[key] = thing
             self._tasks_by_name[thing.name] = thing
         else:
             raise ValueError(
                 f"Unknown registration kind {kind!r}. Supported kinds: 'root', 'type', 'location', 'value', 'action', 'task'."
             )
-        self.all[f"{kind}/{key}"] = thing
+        self.all[(kind, _stem, thing.name)] = thing
         _log.debug("Registered %r as %s", key, kind)
 
     def _lookup(self, kind: str, name: str) -> Any:  # pyright: ignore[reportExplicitAny]
@@ -280,32 +290,52 @@ class Evaluator:
             name = name[1:]
         if kind == "type":
             if name not in self._types_by_name:
-                raise NameError(f"No type {name!r}. Available: {sorted(self._types_by_name)}")
+                raise NameError(
+                    f"No type {name!r}. Available: {sorted(self._types_by_name)}"
+                )
             return self._types_by_name[name]
         elif kind == "root":
             if name not in self._roots_by_name:
-                raise NameError(f"No root {name!r}. Available: {sorted(self._roots_by_name)}")
+                raise NameError(
+                    f"No root {name!r}. Available: {sorted(self._roots_by_name)}"
+                )
             return self._roots_by_name[name]
         elif kind == "location":
             if name not in self._locations_by_name:
-                raise NameError(f"No location {name!r}. Available: {sorted(self._locations_by_name)}")
+                raise NameError(
+                    f"No location {name!r}. Available: {sorted(self._locations_by_name)}"
+                )
             return self._locations_by_name[name]
         elif kind == "value":
             if name not in self._values_by_name:
-                raise NameError(f"No value {name!r}. Available: {sorted(self._values_by_name)}")
+                raise NameError(
+                    f"No value {name!r}. Available: {sorted(self._values_by_name)}"
+                )
             return self._values_by_name[name]
         elif kind == "action":
             if name not in self._actions_by_name:
-                raise NameError(f"No action {name!r}. Available: {sorted(self._actions_by_name)}")
+                raise NameError(
+                    f"No action {name!r}. Available: {sorted(self._actions_by_name)}"
+                )
             return self._actions_by_name[name]
         elif kind == "task":
             if name not in self._tasks_by_name:
-                raise NameError(f"No task {name!r}. Available: {sorted(self._tasks_by_name)}")
+                raise NameError(
+                    f"No task {name!r}. Available: {sorted(self._tasks_by_name)}"
+                )
             return self._tasks_by_name[name]
         else:
-            raise ValueError(f"Unknown lookup kind {kind!r}. Supported: 'root', 'type', 'location', 'value', 'action', 'task'.")
+            raise ValueError(
+                f"Unknown lookup kind {kind!r}. Supported: 'root', 'type', 'location', 'value', 'action', 'task'."
+            )
 
-    def _load(self, path: str, *symbols: str, current_file: Path, caller_globals: dict[str, Any]) -> None:  # pyright: ignore[reportExplicitAny]
+    def _load(
+        self,
+        path: str,
+        *symbols: str,
+        current_file: Path,
+        caller_globals: dict[str, Any],
+    ) -> None:  # pyright: ignore[reportExplicitAny]
         """
         Implementation of the Starlark-like `load()`:
          - path: file path (relative, //-absolute, or @ROOT//-anchored)
@@ -328,14 +358,14 @@ class Evaluator:
                 )
             slashslash = path.index("//")
             root_name = path[1:slashslash]
-            rest = path[slashslash + 2:]  # strip leading "//"
+            rest = path[slashslash + 2 :]  # strip leading "//"
             if ":" not in rest:
                 raise ValueError(
                     f"load() path {path!r} must contain ':' after '@ROOT//package'"
                 )
             colon = rest.index(":")
             package = rest[:colon]
-            filename = rest[colon + 1:]
+            filename = rest[colon + 1 :]
             if root_name not in self._roots_by_name:
                 raise NameError(
                     f"load() references unknown root @{root_name!r}; "
@@ -373,7 +403,8 @@ class Evaluator:
             # default: copy all public names (no leading underscore),
             # but skip __builtins__ and 'load' to avoid clobbering caller environment.
             names_to_copy = [
-                name for name in target_globals.keys()
+                name
+                for name in target_globals.keys()
                 if not name.startswith("_") and name not in ("__builtins__", "load")
             ]
 
@@ -388,7 +419,9 @@ class Evaluator:
         """Executes a single .mlody file and returns the globals dict."""
         if file_path in self._eval_stack:
             stack_copy = self._eval_stack + [file_path]
-            raise ImportError(f"Circular import detected: {' -> '.join(map(str, stack_copy))}")
+            raise ImportError(
+                f"Circular import detected: {' -> '.join(map(str, stack_copy))}"
+            )
 
         if file_path in self.loaded_files:
             # If already loaded, return the cached globals dict from the first execution.
@@ -400,13 +433,15 @@ class Evaluator:
 
             _log.debug("Evaluating %s", file_path)
 
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 script_content = f.read()
 
             _validate_loads_at_top(script_content, file_path)
 
             if self._line_range_extractor is not None:
-                self._file_ranges[file_path] = self._line_range_extractor(file_path, script_content)
+                self._file_ranges[file_path] = self._line_range_extractor(
+                    file_path, script_content
+                )
 
             # Prepare sandbox globals.  Spread SAFE_BUILTINS and override "print"
             # with the instance-level print_fn so that callers (e.g. the LSP server)
@@ -417,7 +452,10 @@ class Evaluator:
                 "__MLODY__": True,
             }
 
-            ctx_kwargs: dict[str, Any] = {"directory": file_path.parent, "file": file_path}  # pyright: ignore[reportExplicitAny]
+            ctx_kwargs: dict[str, Any] = {
+                "directory": file_path.parent,
+                "file": file_path,
+            }  # pyright: ignore[reportExplicitAny]
             if self._extra_ctx is not None:
                 ctx_kwargs.update(self._extra_ctx.as_mapping())
             ctx_struct = Struct(**ctx_kwargs)
@@ -429,11 +467,17 @@ class Evaluator:
             # behalf of the file that invoked it.
             def _register_for_file(kind: str, thing: Named) -> None:
                 current_file = self._eval_stack[-1] if self._eval_stack else file_path
-                call_ctx = Struct(**{  # pyright: ignore[reportExplicitAny]
-                    "directory": current_file.parent,
-                    "file": current_file,
-                    **(self._extra_ctx.as_mapping() if self._extra_ctx is not None else {}),
-                })
+                call_ctx = Struct(
+                    **{  # pyright: ignore[reportExplicitAny]
+                        "directory": current_file.parent,
+                        "file": current_file,
+                        **(
+                            self._extra_ctx.as_mapping()
+                            if self._extra_ctx is not None
+                            else {}
+                        ),
+                    }
+                )
                 self._register(kind, thing, ctx=call_ctx)
 
             def _inject_into_sandbox(name: str, value: Any) -> None:  # pyright: ignore[reportExplicitAny]
@@ -455,7 +499,9 @@ class Evaluator:
             sandbox_globals["builtins"] = builtins_obj
 
             # create a load function that will inject into this sandbox's globals
-            load_func = functools.partial(self._load, current_file=file_path, caller_globals=sandbox_globals)
+            load_func = functools.partial(
+                self._load, current_file=file_path, caller_globals=sandbox_globals
+            )
             sandbox_globals["load"] = load_func
 
             # Register sandbox_globals BEFORE exec so that _inject_into_sandbox can
@@ -487,6 +533,7 @@ class Evaluator:
         Must be called after all files have been evaluated (loading phase complete).
         Raises NameError for any unresolvable label.
         """
+
         def _resolve_value(v: object) -> Named:
             if isinstance(v, str):
                 return self._lookup("value", v)
@@ -500,7 +547,7 @@ class Evaluator:
         # Resolve actions: string labels in inputs/outputs → value structs
         for key, entity in list(self.actions.items()):
             fields = dict(entity.as_mapping())
-            fields["inputs"]  = [_resolve_value(v) for v in fields.get("inputs", [])]
+            fields["inputs"] = [_resolve_value(v) for v in fields.get("inputs", [])]
             fields["outputs"] = [_resolve_value(v) for v in fields.get("outputs", [])]
             new_entity = Struct(**fields)
             self.actions[key] = new_entity
@@ -510,9 +557,9 @@ class Evaluator:
         # Resolve tasks: string labels in inputs/outputs/action → entity structs
         for key, entity in list(self.tasks.items()):
             fields = dict(entity.as_mapping())
-            fields["inputs"]  = [_resolve_value(v) for v in fields.get("inputs", [])]
+            fields["inputs"] = [_resolve_value(v) for v in fields.get("inputs", [])]
             fields["outputs"] = [_resolve_value(v) for v in fields.get("outputs", [])]
-            fields["action"]  = _resolve_action(fields.get("action"))
+            fields["action"] = _resolve_action(fields.get("action"))
             new_entity = Struct(**fields)
             self.tasks[key] = new_entity
             self._tasks_by_name[entity.name] = new_entity

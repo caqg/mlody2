@@ -15,7 +15,7 @@ from mlody.resolver.errors import (
     UnknownRefError,
     WorkspaceResolutionError,
 )
-from mlody.resolver.resolver import parse_label, resolve_sha, resolve_workspace
+from mlody.resolver.resolver import ResolvedRef, parse_label, resolve_sha, resolve_workspace
 
 SHA_MAIN = "a" * 40
 SHA_TAG = "b" * 40
@@ -83,6 +83,8 @@ class TestParseLabel:
 def _make_git_client(pairs: list[tuple[str, str]]) -> MagicMock:
     client = MagicMock()
     client.ls_remote.return_value = pairs
+    client.local_remote_tracking_refs.return_value = []
+    client.rev_parse_local.return_value = None
     return client
 
 
@@ -96,7 +98,8 @@ class TestResolveSha:
             (SHA_TAG, "refs/heads/other"),
         ])
         result = resolve_sha("main", client)
-        assert result == SHA_MAIN
+        assert result.sha == SHA_MAIN
+        assert not result.local_only
 
     def test_lightweight_tag_resolves(self) -> None:
         # Scenario: exact tag name resolves — lightweight tag
@@ -104,7 +107,8 @@ class TestResolveSha:
             (SHA_TAG, "refs/tags/v1.0.0"),
         ])
         result = resolve_sha("v1.0.0", client)
-        assert result == SHA_TAG
+        assert result.sha == SHA_TAG
+        assert not result.local_only
 
     def test_annotated_tag_prefers_deref_sha(self) -> None:
         # Scenario: annotated tag prefers ^{} entry
@@ -115,7 +119,8 @@ class TestResolveSha:
             (commit_sha, "refs/tags/v1.0.0^{}"),
         ])
         result = resolve_sha("v1.0.0", client)
-        assert result == commit_sha
+        assert result.sha == commit_sha
+        assert not result.local_only
 
     def test_short_sha_resolves_unique_prefix(self) -> None:
         # Scenario: short SHA resolves when exactly one remote SHA matches prefix
@@ -126,7 +131,8 @@ class TestResolveSha:
             (other_sha, "refs/heads/feature"),
         ])
         result = resolve_sha("abc1234", client)
-        assert result == full_sha
+        assert result.sha == full_sha
+        assert not result.local_only
 
     def test_unknown_ref_raises(self) -> None:
         # Scenario: unknown ref raises UnknownRefError
@@ -161,6 +167,48 @@ class TestResolveSha:
         with pytest.raises(BranchTagCollisionError) as exc_info:
             resolve_sha("v1.0", client)
         assert exc_info.value.name == "v1.0"
+
+
+class TestResolveShаLocalFallback:
+    """Requirement: Local-only refs resolve and are flagged as not landed."""
+
+    def test_local_only_partial_sha_resolves(self) -> None:
+        # Scenario: partial SHA not on remote but present locally → local_only=True
+        local_sha = "d" * 40
+        client = _make_git_client([])
+        client.rev_parse_local.return_value = local_sha
+
+        result = resolve_sha("dddddddd", client)
+
+        assert result == ResolvedRef(sha=local_sha, local_only=True)
+
+    def test_local_only_branch_resolves(self) -> None:
+        # Scenario: branch exists only locally → local_only=True
+        local_sha = "e" * 40
+        client = _make_git_client([])
+        client.rev_parse_local.return_value = local_sha
+
+        result = resolve_sha("my-local-branch", client)
+
+        assert result == ResolvedRef(sha=local_sha, local_only=True)
+
+    def test_remote_ref_not_marked_local_only(self) -> None:
+        # Scenario: ref found on remote → local_only=False even if locally present
+        client = _make_git_client([(SHA_MAIN, "refs/heads/main")])
+        client.rev_parse_local.return_value = SHA_MAIN
+
+        result = resolve_sha("main", client)
+
+        assert result.sha == SHA_MAIN
+        assert not result.local_only
+        client.rev_parse_local.assert_not_called()
+
+    def test_all_sources_empty_raises(self) -> None:
+        # Scenario: no remote, no tracking refs, no local match → UnknownRefError
+        client = _make_git_client([])
+
+        with pytest.raises(UnknownRefError):
+            resolve_sha("completely-unknown", client)
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +318,8 @@ class TestResolveWorkspaceCommittoidPath:
         cache_root = tmp_path / "cache"
         client = MagicMock()
         client.ls_remote.return_value = []  # nothing → UnknownRefError
+        client.local_remote_tracking_refs.return_value = []
+        client.rev_parse_local.return_value = None
 
         with pytest.raises(UnknownRefError):
             resolve_workspace(

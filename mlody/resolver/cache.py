@@ -66,6 +66,7 @@ def write_metadata(
     sha: str,
     requested_ref: str,
     repo_url: str,
+    local_only: bool = False,
 ) -> None:
     """Write provenance JSON alongside the cache directory.
 
@@ -73,6 +74,10 @@ def write_metadata(
     materialisation may have written it, and we don't want to overwrite it
     with potentially different metadata (e.g., a different requested_ref alias
     for the same SHA).
+
+    ``local_only=True`` is set when the ref was resolved exclusively from the
+    local repo and has not been pushed to the remote (i.e. not landed on
+    GitHub).
     """
     meta_path = cache_root / f"{sha}-meta.json"
     if meta_path.exists():
@@ -83,6 +88,7 @@ def write_metadata(
         "resolved_sha": sha,
         "resolved_at": datetime.now(timezone.utc).isoformat(),
         "repo": repo_url,
+        "local_only": local_only,
     }
     meta_path.write_text(json.dumps(payload, indent=2))
 

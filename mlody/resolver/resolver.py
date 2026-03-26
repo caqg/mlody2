@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import shutil
 from pathlib import Path
-from typing import Callable
+from typing import Callable, NamedTuple
 
 from mlody.core.workspace import Workspace
 from mlody.resolver.cache import (
@@ -28,6 +28,13 @@ from mlody.resolver.git_client import GitClient
 _logger = logging.getLogger(__name__)
 
 _DEFAULT_CACHE_SUFFIX = Path(".cache") / "mlody" / "workspaces"
+
+
+class ResolvedRef(NamedTuple):
+    """Result of SHA resolution — the full 40-char SHA and provenance flag."""
+
+    sha: str
+    local_only: bool
 
 
 def parse_label(label: str) -> tuple[str | None, str]:
@@ -77,8 +84,8 @@ def parse_label(label: str) -> tuple[str | None, str]:
     return (committoid, inner_label)
 
 
-def resolve_sha(committoid: str, git_client: GitClient) -> str:
-    """Resolve a committoid (branch, tag, short/full SHA) to a 40-char SHA.
+def resolve_sha(committoid: str, git_client: GitClient) -> ResolvedRef:
+    """Resolve a committoid (branch, tag, short/full SHA) to a ResolvedRef.
 
     Resolution order:
     1. Exact branch match (refs/heads/<name>)
@@ -87,7 +94,11 @@ def resolve_sha(committoid: str, git_client: GitClient) -> str:
     3. If both a branch and a tag match, raise BranchTagCollisionError.
     4. SHA prefix match across all remote SHAs — unique match returns the full
        SHA; multiple matches raise AmbiguousRefError.
-    5. Nothing matched — raise UnknownRefError.
+    5. Local remote-tracking refs — covers merged/deleted branches fetched
+       locally but no longer on the remote (local_only=False, was landed).
+    6. Local-only fallback via git rev-parse — covers branches and SHAs that
+       exist only in the CWD and have never been pushed (local_only=True).
+    7. Nothing matched — raise UnknownRefError.
     """
     pairs = git_client.ls_remote()
 
@@ -106,13 +117,13 @@ def resolve_sha(committoid: str, git_client: GitClient) -> str:
 
     exact_shas = branch_shas | tag_shas
     if len(exact_shas) == 1:
-        return exact_shas.pop()
+        return ResolvedRef(exact_shas.pop(), False)
 
     # SHA prefix match — search across all (sha, ref) pairs
     all_shas = {sha for sha, _ in pairs}
     prefix_matches = {sha for sha in all_shas if sha.startswith(committoid)}
     if len(prefix_matches) == 1:
-        return prefix_matches.pop()
+        return ResolvedRef(prefix_matches.pop(), False)
     if len(prefix_matches) > 1:
         raise AmbiguousRefError(committoid, sorted(prefix_matches))
 
@@ -124,7 +135,15 @@ def resolve_sha(committoid: str, git_client: GitClient) -> str:
         _logger.debug(
             "Ref %r not found on remote; resolved from local remote-tracking ref", committoid
         )
-        return local_branch_shas.pop()
+        return ResolvedRef(local_branch_shas.pop(), False)
+
+    # Local-only fallback — branch or SHA exists only in the CWD, not pushed.
+    local_sha = git_client.rev_parse_local(committoid)
+    if local_sha:
+        _logger.debug(
+            "Ref %r not found on remote; resolved from local repo (not landed)", committoid
+        )
+        return ResolvedRef(local_sha, True)
 
     raise UnknownRefError(committoid, "origin")
 
@@ -135,6 +154,7 @@ def materialise(
     git_client: GitClient,
     cache_root: Path,
     committoid: str,
+    local_only: bool = False,
 ) -> Path:
     """Ensure a workspace directory for full_sha exists in cache_root.
 
@@ -160,7 +180,7 @@ def materialise(
             git_client.clone_remote(dest=dest, sha=full_sha)
 
         repo_url = git_client.remote_url()
-        write_metadata(cache_root, full_sha, requested_ref=committoid, repo_url=repo_url)
+        write_metadata(cache_root, full_sha, requested_ref=committoid, repo_url=repo_url, local_only=local_only)
     except Exception:
         shutil.rmtree(dest, ignore_errors=True)
         raise
@@ -204,10 +224,10 @@ def resolve_workspace(
     root = cache_root or (Path.home() / _DEFAULT_CACHE_SUFFIX)
     ensure_cache_root(root)
 
-    full_sha = resolve_sha(committoid, client)
-    _logger.debug("Resolved %s to %s", committoid, full_sha)
+    resolved = resolve_sha(committoid, client)
+    _logger.debug("Resolved %s to %s", committoid, resolved.sha)
 
-    dest = materialise(full_sha, monorepo_root, client, root, committoid)
+    dest = materialise(resolved.sha, monorepo_root, client, root, committoid, local_only=resolved.local_only)
     ws = Workspace(
         monorepo_root=dest,
         roots_file=None,
@@ -216,5 +236,5 @@ def resolve_workspace(
     try:
         ws.load(verbose=verbose)
     except FileNotFoundError:
-        raise NoMlodyAtCommitError(committoid, full_sha) from None
-    return (ws, full_sha)
+        raise NoMlodyAtCommitError(committoid, resolved.sha) from None
+    return (ws, resolved.sha)

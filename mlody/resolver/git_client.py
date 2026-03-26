@@ -163,6 +163,24 @@ class GitClient:
                     pairs.append((sha, f"refs/heads/{short}"))
         return pairs
 
+    def rev_parse_local(self, committoid: str) -> str | None:
+        """Resolve a committoid using the local repo only.
+
+        Tries git rev-parse --verify <committoid>^{commit}. Returns the full
+        40-char SHA if found and unambiguous, None otherwise (including
+        ambiguous or unknown). Covers local branches, local-only commits, and
+        partial SHAs present only in the local repo.
+        """
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", f"{committoid}^{{commit}}"],
+            cwd=self._root,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip()
+
     def remote_url(self) -> str:
         """Return the URL of the origin remote."""
         return self._run(["git", "remote", "get-url", "origin"])
