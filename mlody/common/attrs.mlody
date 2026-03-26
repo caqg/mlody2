@@ -14,7 +14,7 @@ _PRIMITIVE_VALIDATORS = {
 }
 
 # Kinds whose validation is handled by generic_validate (used in extend_attrs).
-_PRIMITIVE_KINDS = {"integer", "string", "bool", "float", "vector", "tuple", "map"}
+_PRIMITIVE_KINDS = {"integer", "string", "float", "vector", "tuple", "map", "struct"}
 
 
 def field(*, name, type, mandatory=True):
@@ -92,6 +92,16 @@ def _validate_attr_value(attr_name: str, value: python.Any, type_ref: python.Any
                 if type(item) != "struct" or python.getattr(item, "kind", None) != "field":
                     raise TypeError(f"Attribute {attr_name!r}: each item must be a field() spec")
             return
+        if type_ref == "repr_list":
+            if not isinstance(value, list):
+                raise TypeError(f"Attribute {attr_name!r} expects a list of repr() specs")
+            for item in value:
+                if type(item) != "struct" or python.getattr(item, "kind", None) != "repr":
+                    raise TypeError(
+                        f"Attribute {attr_name!r}: each item must be a repr() spec, "
+                        f"got {type(item)!r}"
+                    )
+            return
         if type_ref in _PRIMITIVE_VALIDATORS:
             if not _PRIMITIVE_VALIDATORS[type_ref](value):
                 raise TypeError(
@@ -129,6 +139,8 @@ def generic_validate(kind: str, attrs: dict[str, python.Any], value: python.Any)
     elif kind == "tuple":
         _validate_tuple(attrs, value)
     elif kind == "map":
+        _validate_map(attrs, value)
+    elif kind == "struct":
         _validate_map(attrs, value)
     else:
         raise NotImplementedError(f"generic validator for kind={kind!r} not implemented")
@@ -337,7 +349,7 @@ def extend_attrs(
             raise NotImplementedError(f"No validator for base kind {effective_kind!r}")
         if extra_validator != None:
             res = extra_validator(value)
-            if res is False:
+            if res == False:
                 raise ValueError(f"value {value!r} rejected by extra_validator")
         return True  # success
 
@@ -358,7 +370,7 @@ def extend_attrs(
             def final_validator(v):
                 composed_validator(v)
                 res = user_val(v)
-                if res is False:
+                if res == False:
                     raise ValueError("rejected by user validator")
                 return True
             merged_fields["validator"] = final_validator

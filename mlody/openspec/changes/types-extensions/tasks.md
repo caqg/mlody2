@@ -10,7 +10,7 @@ Replace `is False` with `== False` at three locations:
 Also replace any `is None` / `is not None` with `== None` / `!= None` found in
 the same two files.
 
-Status: [ ]
+Status: [x]
 
 ---
 
@@ -27,7 +27,7 @@ Status: [ ]
   as stubs if not yet specified)
 - Add 6 struct tests
 
-Status: [ ]
+Status: [x]
 
 ---
 
@@ -41,7 +41,7 @@ Status: [ ]
 - Add 7 new bool tests covering all accepted truthy/falsy inputs and rejection
   of out-of-range integers
 
-Status: [ ]
+Status: [x]
 
 ---
 
@@ -55,7 +55,7 @@ Status: [ ]
   order, raise `TypeError` if none match
 - Add 5 new repr tests including the email example from REQUIREMENTS.md
 
-Status: [ ]
+Status: [x]
 
 ---
 
@@ -63,4 +63,4 @@ Status: [ ]
 
 Run `bazel build --config=lint //mlody/common/...` and fix all warnings/errors.
 
-Status: [ ]
+Status: [x]

@@ -1326,8 +1326,11 @@ def test_primitive_validators_unchanged_after_hierarchy() -> None:
         r.float_t.validator("x")  # type: ignore[attr-defined]
 
     assert r.bool_t.validator(True)  # type: ignore[attr-defined]
+    # Integer 1 is now accepted by the expanded bool typedef (SPEC §2.1).
+    assert r.bool_t.validator(1)  # type: ignore[attr-defined]
+    # Integer 2 is still rejected (not in the accepted bool set).
     with pytest.raises(TypeError):
-        r.bool_t.validator(1)  # type: ignore[attr-defined]
+        r.bool_t.validator(2)  # type: ignore[attr-defined]
 
     assert r.vec_t.validator([1, 2, 3])  # type: ignore[attr-defined]
     with pytest.raises(TypeError):
@@ -1350,3 +1353,275 @@ def test_abstract_type_not_inherited_by_concrete() -> None:
     r = ev._roots_by_name["r"]  # type: ignore[attr-defined]
     assert r.scalar_t.abstract is True  # type: ignore[attr-defined]
     assert r.int_t.abstract is False  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Task 2 — Struct typedef
+# Scenarios: §3.3 of SPEC.md
+# ---------------------------------------------------------------------------
+
+
+def test_struct_typedef_registered() -> None:
+    """After loading types.mlody, 'struct' is registered in ev._types_by_name."""
+    ev = _eval("")
+    assert "struct" in ev._types_by_name
+
+
+def test_struct_validates_dict_with_fields() -> None:
+    """struct_t(fields=[field(...)]).validator accepts a dict with the right shape.
+
+    Uses struct_t() (the typedef factory) rather than struct() (the Starlark builtin)
+    to avoid the naming collision: struct() was restored to the builtin after the
+    mlody-folder/mlody-source definitions in types.mlody.
+    """
+    ev = _eval("""\
+        t = struct_t(fields=[field(name="x", type=float()), field(name="y", type=float())])
+        builtins.register("root", struct(name="r", t=t))
+    """)
+    t = ev._roots_by_name["r"].t  # type: ignore[attr-defined]
+    assert t.validator({"x": 1.0, "y": 2.5})  # type: ignore[attr-defined]
+
+
+def test_struct_rejects_missing_required_field() -> None:
+    """struct_t(fields=[...]).validator raises ValueError when a required field is absent."""
+    ev = _eval("""\
+        t = struct_t(fields=[field(name="x", type=float()), field(name="y", type=float())])
+        builtins.register("root", struct(name="r", t=t))
+    """)
+    t = ev._roots_by_name["r"].t  # type: ignore[attr-defined]
+    with pytest.raises(ValueError, match="missing"):
+        t.validator({"x": 1.0})  # type: ignore[attr-defined]
+
+
+def test_struct_strict_rejects_extra_key() -> None:
+    """struct_t(fields=[...], strict=True) raises ValueError on unexpected keys."""
+    ev = _eval("""\
+        t = struct_t(fields=[field(name="x", type=float())], strict=True)
+        builtins.register("root", struct(name="r", t=t))
+    """)
+    t = ev._roots_by_name["r"].t  # type: ignore[attr-defined]
+    assert t.validator({"x": 1.0})  # type: ignore[attr-defined]
+    with pytest.raises(ValueError, match="unexpected"):
+        t.validator({"x": 1.0, "extra": "oops"})  # type: ignore[attr-defined]
+
+
+def test_mlody_folder_typedef_registered() -> None:
+    """After loading types.mlody, 'mlody-folder' is registered in ev._types_by_name."""
+    ev = _eval("")
+    assert "mlody-folder" in ev._types_by_name
+
+
+def test_mlody_source_typedef_registered() -> None:
+    """After loading types.mlody, 'mlody-source' is registered in ev._types_by_name."""
+    ev = _eval("")
+    assert "mlody-source" in ev._types_by_name
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — Bool completion
+# Scenarios: §3.2 of SPEC.md
+# ---------------------------------------------------------------------------
+
+
+def test_bool_accepts_python_true_false() -> None:
+    """bool().validator accepts Python True and False (SPEC §2.1)."""
+    ev = _eval("""\
+        builtins.register("root", struct(name="r", t=bool()))
+    """)
+    t = ev._roots_by_name["r"].t  # type: ignore[attr-defined]
+    assert t.validator(True)  # type: ignore[attr-defined]
+    assert t.validator(False)  # type: ignore[attr-defined]
+
+
+def test_bool_accepts_truthy_strings() -> None:
+    """bool().validator accepts 'true', 'yes', '1' and their case variants (SPEC §2.1)."""
+    ev = _eval("""\
+        builtins.register("root", struct(name="r", t=bool()))
+    """)
+    t = ev._roots_by_name["r"].t  # type: ignore[attr-defined]
+    for s in ("true", "yes", "1", "TRUE", "Yes", "YES", "True"):
+        assert t.validator(s), f"expected bool validator to accept {s!r}"  # type: ignore[attr-defined]
+
+
+def test_bool_accepts_falsy_strings() -> None:
+    """bool().validator accepts 'false', 'no', '0' and their case variants (SPEC §2.1)."""
+    ev = _eval("""\
+        builtins.register("root", struct(name="r", t=bool()))
+    """)
+    t = ev._roots_by_name["r"].t  # type: ignore[attr-defined]
+    for s in ("false", "no", "0", "FALSE", "No", "False"):
+        assert t.validator(s), f"expected bool validator to accept {s!r}"  # type: ignore[attr-defined]
+
+
+def test_bool_accepts_int_zero_one() -> None:
+    """bool().validator accepts integer 0 and 1 (SPEC §2.1)."""
+    ev = _eval("""\
+        builtins.register("root", struct(name="r", t=bool()))
+    """)
+    t = ev._roots_by_name["r"].t  # type: ignore[attr-defined]
+    assert t.validator(0)  # type: ignore[attr-defined]
+    assert t.validator(1)  # type: ignore[attr-defined]
+
+
+def test_bool_rejects_other_int() -> None:
+    """bool().validator rejects integers other than 0 and 1 (SPEC §2.1)."""
+    ev = _eval("""\
+        builtins.register("root", struct(name="r", t=bool()))
+    """)
+    t = ev._roots_by_name["r"].t  # type: ignore[attr-defined]
+    for v in (2, -1, 42):
+        with pytest.raises(TypeError):
+            t.validator(v)  # type: ignore[attr-defined]
+
+
+def test_bool_rejects_other_string() -> None:
+    """bool().validator rejects strings not in the accepted bool set (SPEC §2.1)."""
+    ev = _eval("""\
+        builtins.register("root", struct(name="r", t=bool()))
+    """)
+    t = ev._roots_by_name["r"].t  # type: ignore[attr-defined]
+    for s in ("maybe", "y", "", "on", "off"):
+        with pytest.raises(TypeError):
+            t.validator(s)  # type: ignore[attr-defined]
+
+
+def test_bool_canonical_normalises_to_python_bool() -> None:
+    """bool type's canonical function maps accepted inputs to Python bool (SPEC §2.2)."""
+    ev = _eval("""\
+        builtins.register("root", struct(name="r", t=bool()))
+    """)
+    t = ev._roots_by_name["r"].t  # type: ignore[attr-defined]
+    assert hasattr(t, "canonical"), "bool type struct must have .canonical"
+    # Truthy inputs map to True
+    assert t.canonical("yes") is True  # type: ignore[attr-defined]
+    assert t.canonical("TRUE") is True  # type: ignore[attr-defined]
+    assert t.canonical(1) is True  # type: ignore[attr-defined]
+    # Falsy inputs map to False
+    assert t.canonical("no") is False  # type: ignore[attr-defined]
+    assert t.canonical(0) is False  # type: ignore[attr-defined]
+    assert t.canonical(False) is False  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Task 4 — Multiple representations
+# Scenarios: §3.1 of SPEC.md
+# ---------------------------------------------------------------------------
+
+
+def test_repr_factory_creates_struct() -> None:
+    """repr() creates a Struct with kind='repr' and the expected fields (SPEC §1.1)."""
+    ev = _eval("""\
+        r = repr(
+            name = "parsed",
+            type = map(fields=[field(name="user", type=string()), field(name="domain", type=string())]),
+            to_canonical = lambda d: d["user"] + "@" + d["domain"],
+        )
+        builtins.register("root", struct(name="r", data=r))
+    """)
+    data = ev._roots_by_name["r"].data  # type: ignore[attr-defined]
+    assert data.kind == "repr"  # type: ignore[attr-defined]
+    assert data.name == "parsed"  # type: ignore[attr-defined]
+    assert hasattr(data, "type")  # type: ignore[attr-defined]
+    assert hasattr(data, "to_canonical")  # type: ignore[attr-defined]
+
+
+def test_typedef_representations_string_accepted() -> None:
+    """A string value matching the canonical base type is accepted by a repr-aware type (SPEC §1.4 step 1)."""
+    ev = _eval("""\
+        typedef(
+            name = "email",
+            base = string(pattern = r".+@.+"),
+            canonical = lambda s: s.strip().lower(),
+            representations = [
+                repr(
+                    name = "parsed",
+                    type = map(fields=[
+                        field(name="user",   type=string()),
+                        field(name="domain", type=string()),
+                    ]),
+                    to_canonical = lambda d: d["user"] + "@" + d["domain"],
+                ),
+            ],
+        )
+        builtins.register("root", struct(name="r", t=email()))
+    """)
+    t = ev._roots_by_name["r"].t  # type: ignore[attr-defined]
+    assert t.validator("user@domain.com")  # type: ignore[attr-defined]
+
+
+def test_typedef_representations_struct_coerced() -> None:
+    """A dict value matching a repr's type is accepted via to_canonical coercion (SPEC §1.4 step 2-3)."""
+    ev = _eval("""\
+        typedef(
+            name = "email",
+            base = string(pattern = r".+@.+"),
+            canonical = lambda s: s.strip().lower(),
+            representations = [
+                repr(
+                    name = "parsed",
+                    type = map(fields=[
+                        field(name="user",   type=string()),
+                        field(name="domain", type=string()),
+                    ]),
+                    to_canonical = lambda d: d["user"] + "@" + d["domain"],
+                ),
+            ],
+        )
+        builtins.register("root", struct(name="r", t=email()))
+    """)
+    t = ev._roots_by_name["r"].t  # type: ignore[attr-defined]
+    assert t.validator({"user": "alice", "domain": "example.com"})  # type: ignore[attr-defined]
+
+
+def test_typedef_representations_invalid_raises() -> None:
+    """A value matching neither canonical nor any repr raises TypeError (SPEC §1.4 step 4)."""
+    ev = _eval("""\
+        typedef(
+            name = "email",
+            base = string(pattern = r".+@.+"),
+            representations = [
+                repr(
+                    name = "parsed",
+                    type = map(fields=[
+                        field(name="user",   type=string()),
+                        field(name="domain", type=string()),
+                    ]),
+                    to_canonical = lambda d: d["user"] + "@" + d["domain"],
+                ),
+            ],
+        )
+        builtins.register("root", struct(name="r", t=email()))
+    """)
+    t = ev._roots_by_name["r"].t  # type: ignore[attr-defined]
+    with pytest.raises(TypeError, match="email"):
+        t.validator(42)  # type: ignore[attr-defined]
+
+
+def test_typedef_representations_order() -> None:
+    """With two reprs, a value matching the second repr is accepted (SPEC §1.4 order)."""
+    ev = _eval("""\
+        typedef(
+            name = "label",
+            base = string(),
+            representations = [
+                repr(
+                    name = "int_form",
+                    type = integer(),
+                    to_canonical = lambda n: str(n),
+                ),
+                repr(
+                    name = "float_form",
+                    type = float(),
+                    to_canonical = lambda f: str(f),
+                ),
+            ],
+        )
+        builtins.register("root", struct(name="r", t=label()))
+    """)
+    t = ev._roots_by_name["r"].t  # type: ignore[attr-defined]
+    # String passes canonical check
+    assert t.validator("hello")  # type: ignore[attr-defined]
+    # Integer matches first repr
+    assert t.validator(42)  # type: ignore[attr-defined]
+    # Float matches second repr
+    assert t.validator(3.14)  # type: ignore[attr-defined]

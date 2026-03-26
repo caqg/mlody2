@@ -1,6 +1,23 @@
 load("//mlody/core/rule.mlody", "rule")
 load("//mlody/common/attrs.mlody", "attr", "field", "extend_attrs", "_make_factory", "_validate_attr_value", "_PRIMITIVE_KINDS", "generic_validate", "_builtin_bool", "_builtin_float", "_builtin_tuple", "_PRIMITIVE_VALIDATORS", "_validate_map", "_validate_tuple")
 
+# Preserve the sandbox struct() builtin before typedef(name="struct") shadows it.
+# After defining mlody-folder and mlody-source (which need the struct factory),
+# we restore struct to the builtin so callers that load() this file unqualified
+# still get the real struct() constructor.
+_struct_builtin = struct
+
+
+def repr(*, name, type, to_canonical, from_canonical=None):
+    """Construct a representation descriptor for use in typedef(representations=[...])."""
+    return Struct(
+        kind="repr",
+        name=name,
+        type=type,
+        to_canonical=to_canonical,
+        from_canonical=from_canonical,
+    )
+
 
 def _type_impl(ctx):
     base_type = python.getattr(ctx.attr, 'base', None)
@@ -16,7 +33,7 @@ def _type_impl(ctx):
             _validate_map(captured_attrs, value)
             if captured_predicate != None:
                 res = captured_predicate(value)
-                if res is False:
+                if res == False:
                     raise ValueError("cross-field predicate rejected the value")
             return True
         new_type_struct = Struct(
@@ -97,6 +114,70 @@ def _type_impl(ctx):
     if ctx.attr.name in _PRIMITIVE_KINDS:
         other_fields['_root_kind'] = ctx.attr.name
 
+    # Representations: when alternate input forms are declared, build a standalone
+    # coercion validator that tries canonical type first, then each repr in order.
+    # We cannot use the standard extend_attrs composition here because extend_attrs
+    # runs the base validator BEFORE the extra_validator; that would reject repr-form
+    # inputs (e.g. a dict passed to a string-based type) before the repr fallback runs.
+    # Instead we build the type struct directly, embedding the full coercion algorithm
+    # in a single validator closure.
+    representations = python.getattr(ctx.attr, "representations", None)
+    if representations != None:
+        captured_reprs = representations
+        captured_base_validator = python.getattr(base_type, "validator", None)
+        captured_predicate = predicate
+        accepted_forms = ["canonical (" + ctx.attr.name + ")"] + [r.name for r in captured_reprs]
+
+        def _coercion_validator(value):
+            # Step 1: try canonical type (base validator)
+            try:
+                if captured_base_validator != None:
+                    captured_base_validator(value)
+                # Passed the base type check; run predicate if present
+                if captured_predicate != None:
+                    res = captured_predicate(value)
+                    if res == False:
+                        raise ValueError("predicate rejected value")
+                return True
+            except (TypeError, ValueError):
+                pass
+
+            # Step 2: try each repr in declaration order
+            for r in captured_reprs:
+                repr_validator = python.getattr(r.type, "validator", None)
+                try:
+                    if repr_validator != None:
+                        repr_validator(value)
+                    # Matched this repr — coercion succeeds
+                    return True
+                except (TypeError, ValueError):
+                    pass
+
+            # Step 3: nothing matched
+            raise TypeError(
+                f"Value {value!r} does not match any accepted form for type "
+                f"{ctx.attr.name!r}. Accepted: {accepted_forms}"
+            )
+
+        # Build the type struct directly: _coercion_validator is the sole gate.
+        # Inherit base attributes and allowed_attrs so factory kwargs still work.
+        base_map = base_type.as_mapping()
+        merged_attrs_for_repr = dict(base_map.get("attributes", {}))
+        merged_allowed_for_repr = dict(base_map.get("_allowed_attrs", {}))
+        repr_fields = dict(base_map)
+        repr_fields["attributes"] = merged_attrs_for_repr
+        repr_fields["_allowed_attrs"] = merged_allowed_for_repr
+        repr_fields["type"] = ctx.attr.name
+        repr_fields["name"] = ctx.attr.name
+        repr_fields["validator"] = _coercion_validator
+        repr_fields["abstract"] = False
+        for k, v in other_fields.items():
+            repr_fields[k] = v
+        new_type_struct = Struct(**repr_fields)
+        builtins.register(ctx.kind, new_type_struct)
+        builtins.inject(ctx.attr.name, _make_factory(new_type_struct))
+        return {}
+
     new_type_struct = extend_attrs(
         base=base_type,
         type_name=ctx.attr.name,
@@ -119,9 +200,10 @@ typedef = rule(
         "attrs":       attr(type="dict",       mandatory=False, default=None),
         "predicate":   attr(type="callable",   mandatory=False, default=None),
         "canonical":   attr(type="callable",   mandatory=False, default=None),
-        "fields":      attr(type="field_list", mandatory=False, default=None),
-        "strict":      attr(type="bool",       mandatory=False, default=None),
-        "abstract":    attr(type="bool",       mandatory=False, default=None),
+        "fields":           attr(type="field_list", mandatory=False, default=None),
+        "strict":           attr(type="bool",       mandatory=False, default=None),
+        "abstract":         attr(type="bool",       mandatory=False, default=None),
+        "representations":  attr(type="repr_list",  mandatory=False, default=None),
     }
 )
 
@@ -139,7 +221,42 @@ typedef(
         "max": attr(type="integer", mandatory=False),
     },
 )
-typedef(name="bool", base=scalar())
+_BOOL_TRUTHY_STRINGS = {"true", "yes", "1"}
+_BOOL_FALSY_STRINGS  = {"false", "no", "0"}
+
+
+def _is_accepted_bool(v):
+    if isinstance(v, _builtin_bool):
+        return True
+    if isinstance(v, str) and v.lower() in _BOOL_TRUTHY_STRINGS:
+        return True
+    if isinstance(v, str) and v.lower() in _BOOL_FALSY_STRINGS:
+        return True
+    # Accept integer 0 or 1, but not bool (bool is a subclass of int in Python)
+    if isinstance(v, int) and not isinstance(v, _builtin_bool) and v in (0, 1):
+        return True
+    raise TypeError(
+        f"Expected bool-like value (True/False, 'true'/'false'/'yes'/'no'/'1'/'0', "
+        f"integer 0 or 1), got {type(v)!r}: {v!r}"
+    )
+
+
+def _coerce_bool(v):
+    if isinstance(v, _builtin_bool):
+        return v
+    if isinstance(v, str):
+        return v.lower() in _BOOL_TRUTHY_STRINGS
+    if isinstance(v, int):
+        return v == 1
+    return False  # unreachable if predicate passed
+
+
+typedef(
+    name      = "bool",
+    base      = scalar(),
+    predicate = _is_accepted_bool,
+    canonical = _coerce_bool,
+)
 typedef(
     name = "float",
     base = scalar(),
@@ -162,13 +279,19 @@ typedef(
 
 typedef(name="tuple", base=aggregate())
 
-# typedef(name="struct",
-# 	base=aggregate(),
-# 	attrs = {
-# 	    "fields": attr(type="field_list", mandatory=False),
-# 	    "required": attr(type=vector(element_type="string")),
-# 	    "strict": attr(type="bool"),
-# 	)
+typedef(
+    name = "struct",
+    base = aggregate(),
+    attrs = {
+        "fields": attr(type="field_list", mandatory=False),
+        "strict":  attr(type="bool",       mandatory=False),
+    },
+)
+
+# Save the struct typedef factory under a stable alias so test code (and
+# .mlody consumers that load() this file unqualified) can call it as struct_t().
+# The struct() builtin is restored below; struct_t() remains the type factory.
+struct_t = struct
 
 typedef(
     name = "map",
@@ -194,18 +317,25 @@ typedef(
 # ---- mlody built-in types ----
 typedef(name="mlody-workspace", description="A snapshot of an mlody workspace.")
 
-# typedef(name="mlody-folder",
-# 	description="A file system folder containing MLody source files or other MLody folders"
-# 	base = struct(fields=[
-# 	    field("subfolders", type=vector(element_type=":mlody-folder")),
-# 	    field("files", type=vector(element_type=":mlody-source")),
-# 	],
-# )
+# typedef(name="mlody-folder") — provisional; field schema deferred to next design step
+typedef(
+    name = "mlody-folder",
+    description = "A file system folder containing mlody source files or other mlody folders.",
+    base = struct(fields = [
+        field(name = "subfolders", type = vector()),   # element_type=mlody-folder deferred
+        field(name = "files",      type = vector()),   # element_type=mlody-source deferred
+    ]),
+)
 
-# typedef(name="mlody-source",
-# 	description="A MLody source file containing MLody entities"
-# 	base = struct(fields=[
-# 	    field("entities", type=vector(element_type="to be decided")),
-# 	],
-# )
+# typedef(name="mlody-source") — provisional; field schema deferred to next design step
+typedef(
+    name = "mlody-source",
+    description = "A mlody source file containing mlody entities.",
+    base = struct(fields = [
+        field(name = "entities", type = vector()),     # element_type TBD
+    ]),
+)
 
+# Restore the struct() builtin so callers that load() this file unqualified
+# still get the real Starlark struct() constructor, not the typedef factory.
+struct = _struct_builtin
