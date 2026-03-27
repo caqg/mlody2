@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import logging
+import os
+import pwd
 import shutil
+import socket
 from pathlib import Path
 from typing import Callable, NamedTuple
 
 from mlody.core.workspace import Workspace
+from mlody.db.evaluations import open_db, write_evaluation
+from mlody.db.local_diff import compute_local_diff_sha, get_repo_root
 from mlody.resolver.cache import (
     acquire_lock,
     cache_dir,
@@ -28,6 +33,53 @@ from mlody.resolver.git_client import GitClient
 _logger = logging.getLogger(__name__)
 
 _DEFAULT_CACHE_SUFFIX = Path(".cache") / "mlody" / "workspaces"
+_DEFAULT_DB_SUFFIX = Path(".cache") / "mlody" / "mlody.sqlite"
+
+
+def _get_username() -> str:
+    """Return the OS username; falls back to pwd lookup if os.getlogin() raises."""
+    try:
+        return os.getlogin()
+    except OSError:
+        return pwd.getpwuid(os.getuid()).pw_name
+
+
+def _record_evaluation_best_effort(
+    *,
+    resolved_sha: str,
+    committoid: str,
+    repo_url: str,
+    local_only: bool,
+    resolved_at: str,
+    value_description: str,
+) -> None:
+    """Write one evaluation row to the local SQLite DB.
+
+    Best-effort: logs at ERROR level and returns on any failure so a DB error
+    never terminates the caller (NFR-AVAIL-001). Connection is always closed.
+    """
+    db_path = Path.home() / _DEFAULT_DB_SUFFIX
+    conn = None
+    try:
+        conn = open_db(db_path)
+        local_diff_sha = compute_local_diff_sha(get_repo_root())
+        write_evaluation(
+            conn,
+            username=_get_username(),
+            hostname=socket.gethostname(),
+            requested_ref=committoid,
+            resolved_sha=resolved_sha,
+            resolved_at=resolved_at,
+            repo=repo_url,
+            local_only=local_only,
+            value_description=value_description,
+            local_diff_sha=local_diff_sha,
+        )
+    except Exception as exc:
+        _logger.error("Failed to write evaluation to %s: %s", db_path, exc)
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 class ResolvedRef(NamedTuple):
@@ -198,6 +250,7 @@ def resolve_workspace(
     git_client: GitClient | None = None,
     cache_root: Path | None = None,
     verbose: bool = False,
+    value_description: str | None = None,
 ) -> tuple[Workspace, str | None]:
     """Resolve a raw label to a ready Workspace and optional resolved SHA.
 
@@ -205,6 +258,10 @@ def resolve_workspace(
     directly and resolved_sha is None. For committoid-qualified labels the
     resolver fetches the remote SHA, materialises a cached clone, and returns
     a Workspace rooted there along with the full 40-char SHA.
+
+    When value_description is provided (non-None, non-empty), a row is written
+    to the local SQLite evaluations DB after successful materialisation. The
+    write is best-effort and never raises (NFR-AVAIL-001).
 
     All error conditions raise WorkspaceResolutionError subclasses — callers
     are responsible for catching and formatting them.
@@ -228,6 +285,19 @@ def resolve_workspace(
     _logger.debug("Resolved %s to %s", committoid, resolved.sha)
 
     dest = materialise(resolved.sha, monorepo_root, client, root, committoid, local_only=resolved.local_only)
+
+    if value_description:
+        from datetime import datetime, timezone
+
+        _record_evaluation_best_effort(
+            resolved_sha=resolved.sha,
+            committoid=committoid,
+            repo_url=client.remote_url() or "",
+            local_only=resolved.local_only,
+            resolved_at=datetime.now(timezone.utc).isoformat(),
+            value_description=value_description,
+        )
+
     ws = Workspace(
         monorepo_root=dest,
         roots_file=None,

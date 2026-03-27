@@ -1,0 +1,31 @@
+load("//build/bzl:python.bzl", "o_py_library", "o_py_test")
+
+o_py_library(
+    name = "db_lib",
+    srcs = [
+        "__init__.py",
+        "evaluations.py",
+        "local_diff.py",
+    ],
+    visibility = ["//:__subpackages__"],
+    deps = ["@pip//uuid_utils"],
+)
+
+o_py_test(
+    name = "local_diff_test",
+    srcs = ["local_diff_test.py"],
+    deps = [
+        ":db_lib",
+        "@pip//pyfakefs",  # keep — pyfakefs provides the `fs` fixture via pytest plugin, not a direct import
+        "@pip//pytest",
+    ],
+)
+
+o_py_test(
+    name = "evaluations_test",
+    srcs = ["evaluations_test.py"],
+    deps = [
+        ":db_lib",
+        "@pip//pytest",
+    ],
+)

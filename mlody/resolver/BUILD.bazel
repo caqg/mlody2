@@ -10,7 +10,10 @@ o_py_library(
         "resolver.py",
     ],
     visibility = ["//:__subpackages__"],
-    deps = ["//mlody/core:core_lib"],
+    deps = [
+        "//mlody/core:core_lib",
+        "//mlody/db:db_lib",  # keep — resolver.py imports open_db, write_evaluation, compute_local_diff_sha
+    ],
 )
 
 o_py_test(
@@ -45,6 +48,7 @@ o_py_test(
     srcs = ["resolver_test.py"],
     deps = [
         ":resolver_lib",
+        "//mlody/db:db_lib",  # keep — resolver_test queries SQLite directly after resolve_workspace
         "@pip//pytest",
     ],
 )

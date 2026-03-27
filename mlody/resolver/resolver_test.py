@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -355,3 +356,138 @@ class TestResolveWorkspaceCommittoidPath:
             )
 
         assert sha == full_sha
+
+
+# ---------------------------------------------------------------------------
+# resolve_workspace — value_description / DB integration (task 5.3)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveWorkspaceValueDescription:
+    """Requirement: value_description wires DB write after materialisation."""
+
+    def _make_fake_client(self, full_sha: str) -> MagicMock:
+        client = MagicMock()
+        client.ls_remote.return_value = [(full_sha, "refs/heads/main")]
+        client.cat_file_type.return_value = "commit"
+        client.remote_url.return_value = "git@github.com:org/repo.git"
+        return client
+
+    def test_value_description_writes_db_row(self, tmp_path: Path) -> None:
+        # Scenario: value_description provided → one DB row is written.
+        # We redirect the DB write to tmp_path by injecting a custom db_path
+        # via patching _record_evaluation_best_effort's internal Path.home call.
+        cache_root = tmp_path / "cache"
+        db_path = tmp_path / "mlody.sqlite"
+        full_sha = SHA_MAIN
+        client = self._make_fake_client(full_sha)
+
+        # Capture the write by routing open_db to our tmp_path db
+        import mlody.resolver.resolver as resolver_mod
+        from mlody.db.evaluations import open_db
+
+        original_fn = resolver_mod._record_evaluation_best_effort
+        captured_calls: list[dict[str, object]] = []
+
+        def fake_record(**kwargs: object) -> None:
+            captured_calls.append(kwargs)
+            conn = open_db(db_path)
+            try:
+                from mlody.db.evaluations import write_evaluation
+
+                write_evaluation(
+                    conn,
+                    username="testuser",
+                    hostname="testhost",
+                    requested_ref=str(kwargs["committoid"]),
+                    resolved_sha=str(kwargs["resolved_sha"]),
+                    resolved_at=str(kwargs["resolved_at"]),
+                    repo=str(kwargs["repo_url"]),
+                    local_only=bool(kwargs["local_only"]),
+                    value_description=str(kwargs["value_description"]),
+                )
+            finally:
+                conn.close()
+
+        with (
+            patch("mlody.resolver.resolver.Workspace") as mock_ws_cls,
+            patch.object(resolver_mod, "_record_evaluation_best_effort", fake_record),
+        ):
+            mock_ws_cls.return_value = MagicMock()
+            resolve_workspace(
+                "main|@lexica//models:bert",
+                monorepo_root=tmp_path,
+                git_client=client,
+                cache_root=cache_root,
+                value_description="bert-base-uncased config",
+            )
+
+        assert len(captured_calls) == 1
+        assert captured_calls[0]["resolved_sha"] == full_sha
+        assert captured_calls[0]["value_description"] == "bert-base-uncased config"
+
+        conn = sqlite3.connect(db_path)
+        try:
+            count = conn.execute("SELECT COUNT(*) FROM evaluations").fetchone()
+            assert count is not None
+            assert count[0] == 1
+            row = conn.execute(
+                "SELECT resolved_sha, value_description FROM evaluations"
+            ).fetchone()
+            assert row is not None
+            assert row[0] == full_sha
+            assert row[1] == "bert-base-uncased config"
+        finally:
+            conn.close()
+
+    def test_no_value_description_skips_db_write(self, tmp_path: Path) -> None:
+        # Scenario: value_description omitted → _record_evaluation_best_effort not called
+        cache_root = tmp_path / "cache"
+        full_sha = SHA_MAIN
+        client = self._make_fake_client(full_sha)
+
+        import mlody.resolver.resolver as resolver_mod
+
+        called: list[bool] = []
+
+        def should_not_be_called(**kwargs: object) -> None:
+            called.append(True)
+
+        with (
+            patch("mlody.resolver.resolver.Workspace") as mock_ws_cls,
+            patch.object(resolver_mod, "_record_evaluation_best_effort", should_not_be_called),
+        ):
+            mock_ws_cls.return_value = MagicMock()
+            resolve_workspace(
+                "main|@lexica//models:bert",
+                monorepo_root=tmp_path,
+                git_client=client,
+                cache_root=cache_root,
+                # value_description not provided
+            )
+
+        assert called == []
+
+    def test_cwd_label_with_value_description_skips_db_write(self, tmp_path: Path) -> None:
+        # Scenario: cwd-relative label — no committoid → DB write is skipped
+        # even if value_description is provided (no resolved_sha to record)
+        import mlody.resolver.resolver as resolver_mod
+
+        called: list[bool] = []
+
+        def should_not_be_called(**kwargs: object) -> None:
+            called.append(True)
+
+        with (
+            patch("mlody.resolver.resolver.Workspace") as mock_ws_cls,
+            patch.object(resolver_mod, "_record_evaluation_best_effort", should_not_be_called),
+        ):
+            mock_ws_cls.return_value = MagicMock()
+            _, sha = resolve_workspace(
+                "@lexica//models:bert",
+                monorepo_root=tmp_path,
+                value_description="should not write",
+            )
+
+        assert sha is None
+        assert called == []

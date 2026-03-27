@@ -60,6 +60,11 @@ dependencies = [
   # HuggingFace model hub client for downloading models.
   # See: https://github.com/huggingface/huggingface_hub
   "huggingface_hub",
+
+  # UUID v7 generation (time-ordered UUIDs per RFC 9562 §5.7).
+  # Rust-backed drop-in extension to Python's uuid module.
+  # See: https://github.com/bdraco/uuid-utils
+  "uuid-utils",
 ]
 
 # See https://docs.astral.sh/ruff/configuration/

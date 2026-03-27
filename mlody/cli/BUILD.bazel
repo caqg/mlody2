@@ -12,6 +12,7 @@ o_py_library(
     deps = [
         "//mlody/common:context_lib",  # keep
         "//mlody/core:core_lib",
+        "//mlody/db:db_lib",
         "//mlody/resolver:resolver_lib",
         "@pip//click",
         "@pip//ptpython",
@@ -35,6 +36,7 @@ o_py_library(
     deps = [
         ":cli_lib",
         "//mlody/core:workspace_lib",
+        "//mlody/db:db_lib",  # keep — show.py imports open_db, write_evaluation, compute_local_diff_sha
         "@pip//click",
         "@pip//rich",
     ],
