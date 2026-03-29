@@ -96,3 +96,12 @@ o_py_test(
         "@pip//pytest",
     ],
 )
+
+o_py_test(
+    name = "dag_cmd_test",
+    srcs = ["dag_cmd_test.py"],
+    deps = [
+        ":cli_lib",
+        "@pip//click",
+    ],
+)
