@@ -80,6 +80,7 @@ def cli(ctx: click.Context, roots: Path | None, verbose: bool) -> None:
 
 def main() -> None:
     """Entry point. Import subcommands and invoke the CLI group."""
+    import mlody.cli.dag_cmd  # noqa: F401
     import mlody.cli.shell  # noqa: F401
     import mlody.cli.show  # noqa: F401
 

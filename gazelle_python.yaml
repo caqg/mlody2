@@ -41,6 +41,7 @@ manifest:
     markdown_it: markdown_it_py
     markupsafe: markupsafe
     mdurl: mdurl
+    networkx: networkx
     packaging: packaging
     parso: parso
     pathspec: pathspec
@@ -71,6 +72,7 @@ manifest:
     typing_extensions: typing_extensions
     typing_inspection: typing_inspection
     urllib3: urllib3
+    uuid_utils: uuid_utils
     wcwidth: wcwidth
     yaml: pyyaml
   pip_repository:

@@ -170,8 +170,10 @@ class Workspace:
         if load_errors:
             raise WorkspaceLoadError(load_errors)
 
+        self._evaluator.resolve()
+
         if verbose:
-            data = {k: v.to_dict() if hasattr(v, "to_dict") else v for k, v in self._evaluator.all.items()}
+            data = {str(k): v.to_dict() if hasattr(v, "to_dict") else v for k, v in self._evaluator.all.items()}
             self._console.print(Syntax(json.dumps(data, indent=2, default=repr), "json"))
 
     def resolve(self, target: str | TargetAddress) -> object:

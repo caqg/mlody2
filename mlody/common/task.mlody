@@ -41,7 +41,31 @@ def _task_impl(ctx):
         config  = config,
     )
     builtins.register(ctx.kind, task_struct)
-    return {}
+
+    def _register_scoped_value(prefix, v):
+        if type(v) == "struct" and python.getattr(v, "kind", None) == "value":
+            scoped = Struct(
+                kind     = "value",
+                name     = prefix + "." + python.getattr(v, "name", ""),
+                type     = python.getattr(v, "type", None),
+                location = python.getattr(v, "location", None),
+                source   = python.getattr(v, "source", None),
+                _lineage = [],
+            )
+            builtins.register("value", scoped)
+
+    # Register task-scoped values: {task}.{port}
+    task_prefix = ctx.attr.name
+    for v in inputs + outputs:
+        _register_scoped_value(task_prefix, v)
+
+    # Register action-scoped values: {task}.{action}.{port}
+    if type(action) == "struct" and python.getattr(action, "kind", None) == "action":
+        action_prefix = task_prefix + "." + python.getattr(action, "name", "")
+        for v in python.getattr(action, "inputs", []) + python.getattr(action, "outputs", []):
+            _register_scoped_value(action_prefix, v)
+
+    return task_struct
 
 
 task = rule(

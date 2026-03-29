@@ -63,11 +63,11 @@ def _value_impl(ctx):
         name=ctx.attr.name,
         type=type_ref,
         location=loc_ref,
-        label=python.getattr(ctx.attr, "label", None),
+        source=python.getattr(ctx.attr, "source", None),
         _lineage=[],          # managed by MLody, not the user
     )
     builtins.register(ctx.kind, value_struct)
-    return {}
+    return value_struct
 
 
 value = rule(
@@ -77,6 +77,6 @@ value = rule(
         "name":     attr(type="string"),
         "type":     attr(type="type_ref"),
         "location": attr(type="location_ref"),
-        "label":    attr(type="string", mandatory=False),
+        "source":   attr(type="string", mandatory=False),
     },
 )

@@ -4,6 +4,7 @@ o_py_library(
     name = "cli_lib",
     srcs = [
         "__init__.py",
+        "dag_cmd.py",
         "main.py",
         "shell.py",
         "show.py",
@@ -15,6 +16,7 @@ o_py_library(
         "//mlody/db:db_lib",
         "//mlody/resolver:resolver_lib",
         "@pip//click",
+        "@pip//networkx",
         "@pip//ptpython",
         "@pip//rich",
     ],

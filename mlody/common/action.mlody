@@ -31,7 +31,7 @@ def _action_impl(ctx):
         config  = config,
     )
     builtins.register(ctx.kind, action_struct)
-    return {}
+    return action_struct
 
 
 action = rule(

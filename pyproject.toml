@@ -65,6 +65,10 @@ dependencies = [
   # Rust-backed drop-in extension to Python's uuid module.
   # See: https://github.com/bdraco/uuid-utils
   "uuid-utils",
+
+  # workspace DAG builder — directed-graph data structures and algorithms.
+  # See: https://networkx.org/
+  "networkx",
 ]
 
 # See https://docs.astral.sh/ruff/configuration/

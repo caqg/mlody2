@@ -185,13 +185,17 @@ def _walk_node(
             start_line = node.start_point[0] + 1  # row is 0-based
             end_line = node.end_point[0] + 1
             if entry in result:
-                existing = result[entry]
-                raise ValueError(
-                    f"Duplicate ({entry[0]!r}, {entry[1]!r}) in {file_path}: "
-                    f"first at lines {existing[0]}-{existing[1]}, "
-                    f"second at lines {start_line}-{end_line}"
-                )
-            result[entry] = (start_line, end_line)
+                if entry[0] == "value":
+                    result[entry] = (start_line, end_line)  # last-write-wins: inline value() inside task/action
+                else:
+                    existing = result[entry]
+                    raise ValueError(
+                        f"Duplicate ({entry[0]!r}, {entry[1]!r}) in {file_path}: "
+                        f"first at lines {existing[0]}-{existing[1]}, "
+                        f"second at lines {start_line}-{end_line}"
+                    )
+            else:
+                result[entry] = (start_line, end_line)
 
     for child in node.children:
         _walk_node(child, result, file_path)

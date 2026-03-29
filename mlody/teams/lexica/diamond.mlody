@@ -1,0 +1,63 @@
+load("//mlody/common/types.mlody")
+load("//mlody/common/locations.mlody")
+load("//mlody/common/values.mlody")
+load("//mlody/common/action.mlody")
+load("//mlody/common/task.mlody")
+
+# Diamond dependency example:
+#
+#          pretrain
+#         /        \
+#  finetune_text  finetune_image
+#         \        /
+#           evaluate
+
+task(
+    name="pretrain",
+    inputs=[],
+    outputs=[value(name="backbone_weights", type=string(), location=s3())],
+    action=action(
+        name="backbone_trainer",
+        inputs=[],
+        outputs=[value(name="backbone_weights", type=string(), location=s3())],
+    ),
+)
+
+task(
+    name="finetune_text",
+    inputs=[value(name="text_backbone", type=string(), location=s3(), source=":pretrain.backbone_weights")],
+    outputs=[value(name="text_model", type=string(), location=s3())],
+    action=action(
+        name="text_finetuner",
+        inputs=[value(name="text_backbone", type=string(), location=s3())],
+        outputs=[value(name="text_model", type=string(), location=s3())],
+    ),
+)
+
+task(
+    name="finetune_image",
+    inputs=[value(name="image_backbone", type=string(), location=s3(), source=":pretrain.backbone_weights")],
+    outputs=[value(name="image_model", type=string(), location=s3())],
+    action=action(
+        name="image_finetuner",
+        inputs=[value(name="image_backbone", type=string(), location=s3())],
+        outputs=[value(name="image_model", type=string(), location=s3())],
+    ),
+)
+
+task(
+    name="evaluate",
+    inputs=[
+        value(name="eval_text_in", type=string(), location=s3(), source=":finetune_text.text_model"),
+        value(name="eval_image_in", type=string(), location=s3(), source=":finetune_image.image_model"),
+    ],
+    outputs=[],
+    action=action(
+        name="multimodal_evaluator",
+        inputs=[
+            value(name="eval_text_in", type=string(), location=s3()),
+            value(name="eval_image_in", type=string(), location=s3()),
+        ],
+        outputs=[],
+    ),
+)

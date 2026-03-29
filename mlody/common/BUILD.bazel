@@ -1,6 +1,15 @@
 #load("@pypi//:requirements.bzl", "all_data_requirements", "all_requirements", "all_whl_requirements", "requirement")
 load("//build/bzl:python.bzl", "o_py_library", "o_py_test")
 
+exports_files([
+    "action.mlody",
+    "attrs.mlody",
+    "locations.mlody",
+    "task.mlody",
+    "types.mlody",
+    "values.mlody",
+])
+
 o_py_library(
     name = "struct",
     srcs = ["struct.py"],
