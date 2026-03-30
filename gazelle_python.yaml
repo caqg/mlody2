@@ -6,6 +6,151 @@
 ---
 manifest:
   modules_mapping:
+    PIL: pillow
+    PyQt6: pyqt6
+    PyQt6.Qt6.plugins.assetimporters.libassimp: pyqt6_qt6
+    PyQt6.Qt6.plugins.egldeviceintegrations.libqeglfs-emu-integration: pyqt6_qt6
+    PyQt6.Qt6.plugins.egldeviceintegrations.libqeglfs-kms-egldevice-integration: pyqt6_qt6
+    PyQt6.Qt6.plugins.egldeviceintegrations.libqeglfs-kms-integration: pyqt6_qt6
+    PyQt6.Qt6.plugins.egldeviceintegrations.libqeglfs-x11-integration: pyqt6_qt6
+    PyQt6.Qt6.plugins.generic.libqevdevkeyboardplugin: pyqt6_qt6
+    PyQt6.Qt6.plugins.generic.libqevdevmouseplugin: pyqt6_qt6
+    PyQt6.Qt6.plugins.generic.libqevdevtabletplugin: pyqt6_qt6
+    PyQt6.Qt6.plugins.generic.libqevdevtouchplugin: pyqt6_qt6
+    PyQt6.Qt6.plugins.generic.libqtuiotouchplugin: pyqt6_qt6
+    PyQt6.Qt6.plugins.geometryloaders.libdefaultgeometryloader: pyqt6_qt6
+    PyQt6.Qt6.plugins.geometryloaders.libgltfgeometryloader: pyqt6_qt6
+    PyQt6.Qt6.plugins.help.libhelpplugin: pyqt6_qt6
+    PyQt6.Qt6.plugins.iconengines.libqsvgicon: pyqt6_qt6
+    PyQt6.Qt6.plugins.imageformats.libqgif: pyqt6_qt6
+    PyQt6.Qt6.plugins.imageformats.libqicns: pyqt6_qt6
+    PyQt6.Qt6.plugins.imageformats.libqico: pyqt6_qt6
+    PyQt6.Qt6.plugins.imageformats.libqjpeg: pyqt6_qt6
+    PyQt6.Qt6.plugins.imageformats.libqpdf: pyqt6_qt6
+    PyQt6.Qt6.plugins.imageformats.libqsvg: pyqt6_qt6
+    PyQt6.Qt6.plugins.imageformats.libqtga: pyqt6_qt6
+    PyQt6.Qt6.plugins.imageformats.libqtiff: pyqt6_qt6
+    PyQt6.Qt6.plugins.imageformats.libqwbmp: pyqt6_qt6
+    PyQt6.Qt6.plugins.imageformats.libqwebp: pyqt6_qt6
+    PyQt6.Qt6.plugins.multimedia.libffmpegmediaplugin: pyqt6_qt6
+    PyQt6.Qt6.plugins.networkinformation.libqconnman: pyqt6_qt6
+    PyQt6.Qt6.plugins.networkinformation.libqglib: pyqt6_qt6
+    PyQt6.Qt6.plugins.networkinformation.libqnetworkmanager: pyqt6_qt6
+    PyQt6.Qt6.plugins.platforminputcontexts.libcomposeplatforminputcontextplugin: pyqt6_qt6
+    PyQt6.Qt6.plugins.platforminputcontexts.libibusplatforminputcontextplugin: pyqt6_qt6
+    PyQt6.Qt6.plugins.platforms.libqeglfs: pyqt6_qt6
+    PyQt6.Qt6.plugins.platforms.libqlinuxfb: pyqt6_qt6
+    PyQt6.Qt6.plugins.platforms.libqminimal: pyqt6_qt6
+    PyQt6.Qt6.plugins.platforms.libqminimalegl: pyqt6_qt6
+    PyQt6.Qt6.plugins.platforms.libqoffscreen: pyqt6_qt6
+    PyQt6.Qt6.plugins.platforms.libqvkkhrdisplay: pyqt6_qt6
+    PyQt6.Qt6.plugins.platforms.libqvnc: pyqt6_qt6
+    PyQt6.Qt6.plugins.platforms.libqwayland: pyqt6_qt6
+    PyQt6.Qt6.plugins.platforms.libqxcb: pyqt6_qt6
+    PyQt6.Qt6.plugins.platformthemes.libqgtk3: pyqt6_qt6
+    PyQt6.Qt6.plugins.platformthemes.libqxdgdesktopportal: pyqt6_qt6
+    PyQt6.Qt6.plugins.position.libqtposition_geoclue2: pyqt6_qt6
+    PyQt6.Qt6.plugins.position.libqtposition_nmea: pyqt6_qt6
+    PyQt6.Qt6.plugins.position.libqtposition_positionpoll: pyqt6_qt6
+    PyQt6.Qt6.plugins.printsupport.libcupsprintersupport: pyqt6_qt6
+    PyQt6.Qt6.plugins.qmllint.libqdslintplugin: pyqt6_qt6
+    PyQt6.Qt6.plugins.qmllint.libquicklintplugin: pyqt6_qt6
+    PyQt6.Qt6.plugins.qmlls.libqmllsquickplugin: pyqt6_qt6
+    PyQt6.Qt6.plugins.renderers.libopenglrenderer: pyqt6_qt6
+    PyQt6.Qt6.plugins.renderers.librhirenderer: pyqt6_qt6
+    PyQt6.Qt6.plugins.renderplugins.libscene2d: pyqt6_qt6
+    PyQt6.Qt6.plugins.sceneparsers.libassimpsceneimport: pyqt6_qt6
+    PyQt6.Qt6.plugins.sceneparsers.libgltfsceneexport: pyqt6_qt6
+    PyQt6.Qt6.plugins.sceneparsers.libgltfsceneimport: pyqt6_qt6
+    PyQt6.Qt6.plugins.scxmldatamodel.libqscxmlecmascriptdatamodel: pyqt6_qt6
+    PyQt6.Qt6.plugins.sensors.libqtsensors_generic: pyqt6_qt6
+    PyQt6.Qt6.plugins.sensors.libqtsensors_iio-sensor-proxy: pyqt6_qt6
+    PyQt6.Qt6.plugins.sqldrivers.libqsqlibase: pyqt6_qt6
+    PyQt6.Qt6.plugins.sqldrivers.libqsqlite: pyqt6_qt6
+    PyQt6.Qt6.plugins.sqldrivers.libqsqlmimer: pyqt6_qt6
+    PyQt6.Qt6.plugins.sqldrivers.libqsqlmysql: pyqt6_qt6
+    PyQt6.Qt6.plugins.sqldrivers.libqsqloci: pyqt6_qt6
+    PyQt6.Qt6.plugins.sqldrivers.libqsqlodbc: pyqt6_qt6
+    PyQt6.Qt6.plugins.sqldrivers.libqsqlpsql: pyqt6_qt6
+    PyQt6.Qt6.plugins.texttospeech.libqtexttospeech_mock: pyqt6_qt6
+    PyQt6.Qt6.plugins.texttospeech.libqtexttospeech_speechd: pyqt6_qt6
+    PyQt6.Qt6.plugins.tls.libqcertonlybackend: pyqt6_qt6
+    PyQt6.Qt6.plugins.tls.libqopensslbackend: pyqt6_qt6
+    PyQt6.Qt6.plugins.wayland-decoration-client.libadwaita: pyqt6_qt6
+    PyQt6.Qt6.plugins.wayland-decoration-client.libbradient: pyqt6_qt6
+    PyQt6.Qt6.plugins.wayland-graphics-integration-client.libdmabuf-server: pyqt6_qt6
+    PyQt6.Qt6.plugins.wayland-graphics-integration-client.libdrm-egl-server: pyqt6_qt6
+    PyQt6.Qt6.plugins.wayland-graphics-integration-client.libqt-plugin-wayland-egl: pyqt6_qt6
+    PyQt6.Qt6.plugins.wayland-graphics-integration-client.libshm-emulation-server: pyqt6_qt6
+    PyQt6.Qt6.plugins.wayland-graphics-integration-client.libvulkan-server: pyqt6_qt6
+    PyQt6.Qt6.plugins.wayland-shell-integration.libfullscreen-shell-v1: pyqt6_qt6
+    PyQt6.Qt6.plugins.wayland-shell-integration.libivi-shell: pyqt6_qt6
+    PyQt6.Qt6.plugins.wayland-shell-integration.libqt-shell: pyqt6_qt6
+    PyQt6.Qt6.plugins.wayland-shell-integration.libwl-shell-plugin: pyqt6_qt6
+    PyQt6.Qt6.plugins.wayland-shell-integration.libxdg-shell: pyqt6_qt6
+    PyQt6.Qt6.plugins.webview.libqtwebview_webengine: pyqt6_qt6
+    PyQt6.Qt6.plugins.xcbglintegrations.libqxcb-egl-integration: pyqt6_qt6
+    PyQt6.Qt6.plugins.xcbglintegrations.libqxcb-glx-integration: pyqt6_qt6
+    PyQt6.Qt6.qml.QtCore.libqtqmlcoreplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtMultimedia.libquickmultimediaplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtNetwork.libqmlnetworkplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtPositioning.libpositioningquickplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQml.Models.libmodelsplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQml.StateMachine.libqtqmlstatemachineplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQml.WorkerScript.libworkerscriptplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQml.XmlListModel.libqmlxmllistmodelplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQml.libqmlplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Controls.Basic.impl.libqtquickcontrols2basicstyleimplplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Controls.Basic.libqtquickcontrols2basicstyleplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Controls.FluentWinUI3.impl.libqtquickcontrols2fluentwinui3styleimplplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Controls.FluentWinUI3.libqtquickcontrols2fluentwinui3styleplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Controls.Fusion.impl.libqtquickcontrols2fusionstyleimplplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Controls.Fusion.libqtquickcontrols2fusionstyleplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Controls.Imagine.impl.libqtquickcontrols2imaginestyleimplplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Controls.Imagine.libqtquickcontrols2imaginestyleplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Controls.Material.impl.libqtquickcontrols2materialstyleimplplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Controls.Material.libqtquickcontrols2materialstyleplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Controls.Universal.impl.libqtquickcontrols2universalstyleimplplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Controls.Universal.libqtquickcontrols2universalstyleplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Controls.impl.libqtquickcontrols2implplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Controls.libqtquickcontrols2plugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Dialogs.libqtquickdialogsplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Dialogs.quickimpl.libqtquickdialogs2quickimplplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Effects.libeffectsplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Layouts.libqquicklayoutsplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.LocalStorage.libqmllocalstorageplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Particles.libparticlesplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Pdf.libpdfquickplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Scene2D.libqtquickscene2dplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Scene3D.libqtquickscene3dplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Shapes.DesignHelpers.libqtquickshapesdesignhelpersplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Shapes.libqmlshapesplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Templates.libqtquicktemplates2plugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Timeline.BlendTrees.libqtquicktimelineblendtreesplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Timeline.libqtquicktimelineplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.VectorImage.Helpers.libqquickvectorimagehelpersplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.VectorImage.libqquickvectorimageplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.Window.libquickwindowplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.libqtquick2plugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick.tooling.libquicktoolingplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick3D.AssetUtils.libqtquick3dassetutilsplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick3D.Effects.libqtquick3deffectplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick3D.Helpers.impl.libqtquick3dhelpersimplplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick3D.Helpers.libqtquick3dhelpersplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick3D.ParticleEffects.libqtquick3dparticleeffectsplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick3D.Particles3D.libqtquick3dparticles3dplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick3D.Physics.Helpers.libqtquick3dphysicshelpersplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick3D.Physics.libqquick3dphysicsplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick3D.SpatialAudio.libquick3dspatialaudioplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick3D.Xr.libquick3dxrplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtQuick3D.libqquick3dplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtRemoteObjects.libdeclarative_remoteobjectsplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtSensors.libsensorsquickplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtTest.libquicktestplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtTextToSpeech.libtexttospeechqmlplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtWebChannel.libwebchannelquickplugin: pyqt6_qt6
+    PyQt6.Qt6.qml.QtWebSockets.libqmlwebsocketsplugin: pyqt6_qt6
+    PyQt6.sip: pyqt6_sip
     annotated_doc: annotated_doc
     annotated_types: annotated_types
     anyio: anyio
@@ -18,10 +163,14 @@ manifest:
     charset_normalizer: charset_normalizer
     click: click
     colorama: colorama
+    contourpy: contourpy
     copier: copier
+    cycler: cycler
+    dateutil: python_dateutil
     debugpy: debugpy
     dunamai: dunamai
     filelock: filelock
+    fontTools: fonttools
     fsspec: fsspec
     funcy: funcy
     git: gitpython
@@ -37,11 +186,17 @@ manifest:
     jedi: jedi
     jinja2: jinja2
     jinja2_ansible_filters: jinja2_ansible_filters
+    kiwisolver: kiwisolver
     lsprotocol: lsprotocol
     markdown_it: markdown_it_py
     markupsafe: markupsafe
+    matplotlib: matplotlib
     mdurl: mdurl
+    mpl_toolkits.axes_grid1: matplotlib
+    mpl_toolkits.axisartist: matplotlib
+    mpl_toolkits.mplot3d: matplotlib
     networkx: networkx
+    numpy: numpy
     packaging: packaging
     parso: parso
     pathspec: pathspec
@@ -58,12 +213,15 @@ manifest:
     pyfiglet: pyfiglet
     pygls: pygls
     pygments: pygments
+    pylab: matplotlib
+    pyparsing: pyparsing
     pytest: pytest
     questionary: questionary
     rassumfrassum: rassumfrassum
     requests: requests
     rich: rich
     shellingham: shellingham
+    six: six
     smmap: smmap
     tqdm: tqdm
     tree_sitter: tree_sitter

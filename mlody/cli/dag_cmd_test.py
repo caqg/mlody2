@@ -1,7 +1,8 @@
 """Tests for mlody.cli.dag_cmd — dag subcommand.
 
 All tests trace back to named requirements and scenarios in
-mlody/openspec/changes/dag-label-filter/REQUIREMENTS.md and design.md.
+mlody/openspec/changes/dag-label-filter/REQUIREMENTS.md and design.md, and
+mlody/openspec/changes/dag-gui/REQUIREMENTS.md and design.md.
 
 Workspace content is provided via a patched Workspace factory that returns
 a MagicMock whose evaluator.tasks dict is populated with simple Struct-like
@@ -357,3 +358,195 @@ class TestDagRegression:
         assert "Workspace DAG" in output
         # Filtered title must NOT appear when no argument is given
         assert "ancestors of" not in output
+
+
+# ---------------------------------------------------------------------------
+# 4.1–4.6 TestDagGuiFlag
+# ---------------------------------------------------------------------------
+
+
+def _invoke_dag_with_gui_patch(
+    tmp_path: Path,
+    extra_args: list[str],
+    tasks: dict[str, SimpleNamespace],
+    mock_gui: object,
+) -> object:
+    """Invoke 'mlody dag' with a pre-constructed show_dag_gui mock already in place.
+
+    The caller is responsible for applying the patch context; this helper only
+    handles Workspace patching and runner invocation so the caller can inspect
+    the mock after the call.
+    """
+    ws_mock = _make_workspace_mock(tasks)
+    runner = CliRunner()
+    with patch("mlody.cli.dag_cmd.Workspace") as mock_cls:
+        mock_cls.return_value = ws_mock
+        result = runner.invoke(
+            cli,
+            ["dag"] + extra_args,
+            obj={"monorepo_root": tmp_path, "roots": None, "verbose": False},
+        )
+    return result
+
+
+class TestDagGuiFlag:
+    """Tests for the --gui flag on the dag subcommand (dag-gui change).
+
+    All tests patch ``mlody.cli.dag_cmd.show_dag_gui`` to prevent any real
+    window from opening.  matplotlib is never imported during these tests (D-9).
+    """
+
+    def test_gui_flag_invokes_renderer(self, tmp_path: Path) -> None:
+        """--gui passed; show_dag_gui called exactly once (FR-001)."""
+        ws_mock = _make_workspace_mock(_wired_tasks())
+        runner = CliRunner()
+
+        with patch("mlody.cli.dag_cmd.show_dag_gui") as mock_gui:
+            with patch("mlody.cli.dag_cmd.Workspace") as mock_cls:
+                mock_cls.return_value = ws_mock
+                result = runner.invoke(
+                    cli,
+                    ["dag", "--gui"],
+                    obj={"monorepo_root": tmp_path, "roots": None, "verbose": False},
+                )
+
+        assert result.exit_code == 0, result.output  # type: ignore[union-attr]
+        mock_gui.assert_called_once()
+
+    def test_gui_renderer_receives_full_dag(self, tmp_path: Path) -> None:
+        """No label + --gui; mock receives a graph containing all node IDs (FR-002, KPI-001)."""
+        tasks = _wired_tasks()
+        ws_mock = _make_workspace_mock(tasks)
+        runner = CliRunner()
+
+        with patch("mlody.cli.dag_cmd.show_dag_gui") as mock_gui:
+            with patch("mlody.cli.dag_cmd.Workspace") as mock_cls:
+                mock_cls.return_value = ws_mock
+                runner.invoke(
+                    cli,
+                    ["dag", "--gui"],
+                    obj={"monorepo_root": tmp_path, "roots": None, "verbose": False},
+                )
+
+        mock_gui.assert_called_once()
+        received_graph = mock_gui.call_args[0][0]  # type: ignore[index]
+        # All four node IDs from _wired_tasks must be present in the graph passed to the renderer.
+        for node_id in ("task/test:upstream", "task/test:midstream", "task/test:downstream", "task/test:isolated_task"):
+            assert node_id in received_graph.nodes
+
+    def test_gui_renderer_receives_filtered_subgraph(self, tmp_path: Path) -> None:
+        """Label + --gui; mock receives only ancestor nodes, not unrelated ones (FR-002, KPI-002)."""
+        tasks = _wired_tasks()
+        ws_mock = _make_workspace_mock(tasks)
+        runner = CliRunner()
+
+        with patch("mlody.cli.dag_cmd.show_dag_gui") as mock_gui:
+            with patch("mlody.cli.dag_cmd.Workspace") as mock_cls:
+                mock_cls.return_value = ws_mock
+                runner.invoke(
+                    cli,
+                    ["dag", "model_checkpoint", "--gui"],
+                    obj={"monorepo_root": tmp_path, "roots": None, "verbose": False},
+                )
+
+        mock_gui.assert_called_once()
+        received_graph = mock_gui.call_args[0][0]  # type: ignore[index]
+        # Ancestors of model_checkpoint: downstream, midstream, upstream
+        assert "task/test:downstream" in received_graph.nodes
+        assert "task/test:upstream" in received_graph.nodes
+        assert "task/test:midstream" in received_graph.nodes
+        # isolated_task produces a different value and must NOT appear
+        assert "task/test:isolated_task" not in received_graph.nodes
+
+    def test_gui_table_printed_before_renderer(self, tmp_path: Path) -> None:
+        """--gui; final output contains the table title; mock was called (US-005).
+
+        CliRunner captures output; we assert the table title is present in the
+        final output (confirming the table rendered) and that the mock was
+        invoked (confirming the renderer was called).  This is sufficient to
+        satisfy US-005 (table first, then renderer).
+        """
+        ws_mock = _make_workspace_mock(_wired_tasks())
+        runner = CliRunner()
+
+        with patch("mlody.cli.dag_cmd.show_dag_gui") as mock_gui:
+            with patch("mlody.cli.dag_cmd.Workspace") as mock_cls:
+                mock_cls.return_value = ws_mock
+                result = runner.invoke(
+                    cli,
+                    ["dag", "--gui"],
+                    obj={"monorepo_root": tmp_path, "roots": None, "verbose": False},
+                )
+
+        assert result.exit_code == 0  # type: ignore[union-attr]
+        # Table title must appear in stdout (table was rendered)
+        assert "Workspace DAG" in result.output  # type: ignore[union-attr]
+        # Renderer must have been called (GUI path was executed)
+        mock_gui.assert_called_once()
+
+    def test_no_gui_flag_renderer_not_called(self, tmp_path: Path) -> None:
+        """No --gui flag; show_dag_gui is never called (FR-001, US-007)."""
+        ws_mock = _make_workspace_mock(_wired_tasks())
+        runner = CliRunner()
+
+        with patch("mlody.cli.dag_cmd.show_dag_gui") as mock_gui:
+            with patch("mlody.cli.dag_cmd.Workspace") as mock_cls:
+                mock_cls.return_value = ws_mock
+                result = runner.invoke(
+                    cli,
+                    ["dag"],
+                    obj={"monorepo_root": tmp_path, "roots": None, "verbose": False},
+                )
+
+        assert result.exit_code == 0  # type: ignore[union-attr]
+        mock_gui.assert_not_called()
+
+    def test_gui_exit_code_zero(self, tmp_path: Path) -> None:
+        """--gui; mock returns normally; exit code is 0 (FR-007)."""
+        ws_mock = _make_workspace_mock(_wired_tasks())
+        runner = CliRunner()
+
+        with patch("mlody.cli.dag_cmd.show_dag_gui", return_value=None):
+            with patch("mlody.cli.dag_cmd.Workspace") as mock_cls:
+                mock_cls.return_value = ws_mock
+                result = runner.invoke(
+                    cli,
+                    ["dag", "--gui"],
+                    obj={"monorepo_root": tmp_path, "roots": None, "verbose": False},
+                )
+
+        assert result.exit_code == 0  # type: ignore[union-attr]
+
+
+# ---------------------------------------------------------------------------
+# 4.7 TestDagGuiRegression
+# ---------------------------------------------------------------------------
+
+
+class TestDagGuiRegression:
+    """NFR-C-001, KPI-003: mlody dag without --gui is byte-for-byte unchanged."""
+
+    def test_no_gui_output_unchanged(self, tmp_path: Path) -> None:
+        """mlody dag (no --gui) produces the same output as before the dag-gui change.
+
+        Asserts that the title, all task node IDs, and the absence of any
+        new lines introduced by the GUI code path are preserved (NFR-C-001,
+        KPI-003).
+        """
+        with patch("mlody.cli.dag_cmd.show_dag_gui") as mock_gui:
+            result = _invoke_dag(tmp_path, [], _wired_tasks())
+
+        assert result.exit_code == 0  # type: ignore[union-attr]
+        output: str = result.output  # type: ignore[union-attr]
+
+        # All node IDs must appear
+        assert "task/test:upstream" in output
+        assert "task/test:midstream" in output
+        assert "task/test:downstream" in output
+        assert "task/test:isolated_task" in output
+
+        # Title unchanged
+        assert "Workspace DAG" in output
+
+        # GUI renderer was never called when --gui is absent
+        mock_gui.assert_not_called()

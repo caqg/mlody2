@@ -5,6 +5,7 @@ o_py_library(
     srcs = [
         "__init__.py",
         "dag_cmd.py",
+        "dag_gui.py",
         "main.py",
         "shell.py",
         "show.py",
@@ -16,6 +17,8 @@ o_py_library(
         "//mlody/db:db_lib",
         "//mlody/resolver:resolver_lib",
         "@pip//click",
+        "@pip//matplotlib",  # keep — lazy import in dag_gui.show_dag_gui
+        "@pip//pyqt6",  # keep — Qt backend for matplotlib GUI, lazy import in dag_gui.show_dag_gui
         "@pip//networkx",
         "@pip//ptpython",
         "@pip//rich",
@@ -71,6 +74,7 @@ o_py_binary(
     name = "mlody",
     srcs = ["__main__.py"],
     main = "__main__.py",
+    package_collisions = "warning",
     visibility = ["//visibility:public"],
     deps = [":cli_lib"],
 )

@@ -11,6 +11,7 @@ import networkx
 from rich.console import Console
 from rich.table import Table
 
+from mlody.cli.dag_gui import show_dag_gui
 from mlody.cli.main import cli
 from mlody.core.dag import Edge, TaskNode, ancestors_subgraph, build_dag
 from mlody.core.targets import parse_target
@@ -122,8 +123,14 @@ def _suggest_label_fix(
 
 @cli.command("dag")
 @click.argument("label", required=False, default=None)
+@click.option(
+    "--gui",
+    is_flag=True,
+    default=False,
+    help="Open a GUI window showing the DAG diagram (blocking until closed).",
+)
 @click.pass_context
-def dag_cmd(ctx: click.Context, label: str | None) -> None:
+def dag_cmd(ctx: click.Context, label: str | None, gui: bool) -> None:
     """Display the workspace task dependency graph.
 
     When VALUE is omitted all tasks are shown in topological order
@@ -141,6 +148,11 @@ def dag_cmd(ctx: click.Context, label: str | None) -> None:
 
     If VALUE does not match any task or output port the command prints a
     red error to stderr and exits with code 1.
+
+    Pass --gui to open a native desktop window showing the same graph as a
+    directed node-link diagram.  The window is blocking: the command does not
+    return to the shell prompt until the window is closed.  The Rich table is
+    always printed first, before the window opens.
     """
     monorepo_root: Path = ctx.obj["monorepo_root"]
     roots: Path | None = ctx.obj.get("roots")
@@ -199,3 +211,6 @@ def dag_cmd(ctx: click.Context, label: str | None) -> None:
         )
 
     _console.print(table)
+
+    if gui:
+        show_dag_gui(display_graph, title)

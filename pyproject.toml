@@ -69,6 +69,13 @@ dependencies = [
   # workspace DAG builder — directed-graph data structures and algorithms.
   # See: https://networkx.org/
   "networkx",
+
+  # interactive graph visualisation for `mlody dag --gui`.
+  # See: https://matplotlib.org/
+  "matplotlib",
+  # Qt backend for matplotlib GUI window (precompiled wheels, no C compilation).
+  # See: https://pypi.org/project/PyQt6/
+  "PyQt6",
 ]
 
 # See https://docs.astral.sh/ruff/configuration/
