@@ -94,7 +94,7 @@ o_py_library(
     deps = [
         "//common/python/starlarkish/core:core_lib",
         "//common/python/starlarkish/evaluator:evaluator_lib",
-        "//mlody:mlody_lib",  # keep — provides mlody/__init__.py (namespace package)
+        "//mlody/common:common_lib",
         "//mlody/common:context_lib",  # keep
         "//mlody/core/label:label_pkg",  # keep
         "@pip//networkx",  # keep — workspace DAG builder
@@ -108,19 +108,18 @@ o_py_test(
     name = "dag_test",
     srcs = ["dag_test.py"],
     data = [
+        "rule.mlody",
         "//mlody/common:action.mlody",  # keep — base files for in-memory test workspace
         "//mlody/common:attrs.mlody",  # keep
         "//mlody/common:locations.mlody",  # keep
         "//mlody/common:task.mlody",  # keep
         "//mlody/common:types.mlody",  # keep
         "//mlody/common:values.mlody",  # keep
-        "rule.mlody",
     ],
     deps = [
         ":core_lib",
         "//common/python/starlarkish",
         "//common/python/starlarkish/evaluator:evaluator_lib",
-        "//common/python/starlarkish/evaluator:testing",  # keep — InMemoryFS
         "@pip//networkx",  # keep
         "@pip//pytest",
     ],

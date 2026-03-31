@@ -18,7 +18,6 @@ o_py_library(
         "//mlody/resolver:resolver_lib",
         "@pip//click",
         "@pip//matplotlib",  # keep — lazy import in dag_gui.show_dag_gui
-        "@pip//pyqt6",  # keep — Qt backend for matplotlib GUI, lazy import in dag_gui.show_dag_gui
         "@pip//networkx",
         "@pip//ptpython",
         "@pip//rich",
