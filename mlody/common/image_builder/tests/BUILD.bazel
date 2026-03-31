@@ -18,8 +18,9 @@ o_py_test(
     name = "clone_test",
     srcs = ["clone_test.py"],
     deps = [
+        "//mlody/common:common_lib",
         "//mlody/common/image_builder/phases:phases_lib",  # keep
-        "@pip//pyfakefs",
+        "@pip//pytest",
     ],
 )
 
@@ -27,8 +28,9 @@ o_py_test(
     name = "build_test",
     srcs = ["build_test.py"],
     deps = [
+        "//mlody/common:common_lib",
         "//mlody/common/image_builder/phases:phases_lib",  # keep
-        "@pip//pyfakefs",
+        "@pip//pytest",
     ],
 )
 
@@ -36,6 +38,7 @@ o_py_test(
     name = "errors_test",
     srcs = ["errors_test.py"],
     deps = [
+        "//mlody/common:common_lib",
         "//mlody/common/image_builder:image_builder_core",  # keep
     ],
 )
@@ -44,7 +47,9 @@ o_py_test(
     name = "output_test",
     srcs = ["output_test.py"],
     deps = [
+        "//mlody/common:common_lib",
         "//mlody/common/image_builder:image_builder_core",  # keep
+        "@pip//pytest",
     ],
 )
 
@@ -52,7 +57,9 @@ o_py_test(
     name = "cli_test",
     srcs = ["cli_test.py"],
     deps = [
+        "//mlody/common:common_lib",
         "//mlody/common/image_builder:cli_lib",  # keep
         "@pip//click",
+        "@pip//pytest",
     ],
 )

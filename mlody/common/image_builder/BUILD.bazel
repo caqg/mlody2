@@ -18,7 +18,14 @@ o_py_library(
 # Full library: core + phases + pipeline orchestrator.
 o_py_library(
     name = "image_builder_lib",
-    srcs = ["pipeline.py"],
+    srcs = [
+        "__init__.py",
+        "auth.py",
+        "errors.py",
+        "log.py",
+        "output.py",
+        "pipeline.py",
+    ],
     visibility = ["//:__subpackages__"],
     deps = [
         ":image_builder_core",  # keep
@@ -44,6 +51,7 @@ o_py_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":image_builder_lib",  # keep
+        "//mlody/common:common_lib",
         "@pip//click",
     ],
 )

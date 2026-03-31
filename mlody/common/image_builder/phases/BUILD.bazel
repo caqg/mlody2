@@ -12,6 +12,7 @@ o_py_library(
     ],
     visibility = ["//:__subpackages__"],
     deps = [
+        "//mlody/common:common_lib",
         "//mlody/common/image_builder:image_builder_core",  # keep
     ],
 )
