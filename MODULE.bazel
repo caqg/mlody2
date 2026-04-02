@@ -59,6 +59,7 @@ oci.pull(
     ],
 )
 use_repo(oci, "distroless_base", "distroless_base_linux_amd64", "distroless_base_linux_arm64")
+
 oci.pull(
     name = "distroless_python3",
     # gcr.io/distroless/python3-debian12 pinned at a stable digest for reproducibility.
@@ -70,6 +71,7 @@ oci.pull(
     ],
 )
 use_repo(oci, "distroless_python3", "distroless_python3_linux_amd64", "distroless_python3_linux_arm64")
+
 oci.pull(
     name = "debian_slim",
     # docker.io/library/debian:12-slim — has bash, needed for aspect_rules_py
@@ -94,6 +96,19 @@ archive_override(
     integrity = "sha256-b+P4WPdc2JBbJXO8JGW6pbAP6Qqyo59p1CqKENHtAdw=",
     strip_prefix = "copybara-20260330",
     urls = ["https://github.com/google/copybara/archive/refs/tags/v20260330.tar.gz"],
+)
+
+# aspect_rules_py 1.10.0 has a bug in _map_srcs (py_pex_binary.bzl): generated
+# namespace __init__.py files from rules_python produce a bazel-out/ --dep path
+# alongside the source-tree path, causing pex to fail with MetadataError.
+# Patch normalises f.path against f.root.path so uniquify=True collapses them.
+archive_override(
+    module_name = "aspect_rules_py",
+    integrity = "sha256-xnVgCx0NMMy61LPIJ2KbDteH3fYwMDS+l5CU46lHKZo=",
+    patches = ["//build/patches:aspect_rules_py_pex_generated_deps.patch"],
+    patch_strip = 1,
+    strip_prefix = "rules_py-1.10.0",
+    urls = ["https://github.com/aspect-build/rules_py/releases/download/v1.10.0/rules_py-v1.10.0.tar.gz"],
 )
 ##
 

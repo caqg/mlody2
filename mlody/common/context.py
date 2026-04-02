@@ -2,7 +2,7 @@
 
 import uuid
 import git
-from common.python.starlarkish.core.struct import struct
+from starlarkish.core.struct import struct
 import getpass
 import os
 

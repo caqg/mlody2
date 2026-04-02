@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
+import mlody.cli.dag_cmd  # noqa: F401  # ensure command module is loaded for patch targets
 from mlody.cli.main import cli
 
 

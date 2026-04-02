@@ -11,7 +11,7 @@ from typing import Any, Callable, cast
 from rich.console import Console
 from rich.syntax import Syntax
 
-from common.python.starlarkish.evaluator.evaluator import Evaluator
+from starlarkish.evaluator.evaluator import Evaluator
 from mlody.common.context import ctx as mlody_ctx
 from mlody.core.source_parser import extract_entity_ranges
 from mlody.core.targets import TargetAddress, parse_target, resolve_target_value
@@ -26,7 +26,7 @@ def force(v: object) -> object:
     has ``type == "virtual"``.  In that case ``location.materializer(v)`` is
     called and its return value is returned.  All other inputs pass through.
     """
-    from common.python.starlarkish.core.struct import Struct
+    from starlarkish.core.struct import Struct
 
     if not isinstance(v, Struct):
         return v
@@ -102,7 +102,7 @@ class Workspace:
         """
         import subprocess
 
-        from common.python.starlarkish.core.struct import struct
+        from starlarkish.core.struct import struct
 
         def _git(*args: str) -> str:
             try:
@@ -188,7 +188,7 @@ class Workspace:
             # Workspace-attribute label: return a virtual value Struct whose
             # materializer forces the attribute access lazily.
             from mlody.core.label import parse_label as _core_parse_label
-            from common.python.starlarkish.core.struct import Struct
+            from starlarkish.core.struct import Struct
 
             lbl = _core_parse_label(target)
             if lbl.attribute_path is None:

@@ -7,10 +7,10 @@ Exports the three primary symbols consumers need:
 * ``Evaluator`` — the sandboxed .mlody script execution engine
 
 Existing import paths (e.g.
-``from common.python.starlarkish.core.struct import struct``) continue to
+``from starlarkish.core.struct import struct``) continue to
 work unchanged.
 """
-from common.python.starlarkish.core.struct import Struct, struct
-from common.python.starlarkish.evaluator.evaluator import Evaluator
+from starlarkish.core.struct import Struct, struct
+from starlarkish.evaluator.evaluator import Evaluator
 
 __all__ = ["Struct", "struct", "Evaluator"]

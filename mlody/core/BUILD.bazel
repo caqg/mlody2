@@ -12,6 +12,7 @@ o_py_test(
     name = "targets_test",
     srcs = ["targets_test.py"],
     deps = [
+        "//common/python/starlarkish",
         ":core_lib",
         "//common/python/starlarkish/core:core_lib",
         "@pip//pytest",
@@ -72,6 +73,7 @@ o_py_test(
     srcs = ["workspace_test.py"],
     deps = [
         ":core_lib",
+        "//common/python/starlarkish",
         "//common/python/starlarkish/core:core_lib",
         "//mlody/common:context_lib",  # keep
         "@pip//pyfakefs",

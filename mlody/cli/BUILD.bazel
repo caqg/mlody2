@@ -64,6 +64,7 @@ o_py_test(
     srcs = ["shell_test.py"],
     deps = [
         ":cli_lib",
+        "//common/python/starlarkish",
         "@pip//click",
         "@pip//pytest",
     ],
@@ -84,6 +85,7 @@ o_py_test(
     deps = [
         ":cli_lib",
         "//common/python/starlarkish/core:core_lib",
+        "//common/python/starlarkish",
         "//mlody/resolver:resolver_lib",
         "@pip//click",
         "@pip//pytest",
@@ -105,6 +107,7 @@ o_py_test(
     srcs = ["dag_cmd_test.py"],
     deps = [
         ":cli_lib",
+        "//common/python/starlarkish",
         "@pip//click",
     ],
 )

@@ -20,6 +20,7 @@ o_py_test(
     deps = [
         "//mlody/common:common_lib",
         "//mlody/common/image_builder/phases:phases_lib",  # keep
+        "@pip//pyfakefs",
         "@pip//pytest",
     ],
 )
@@ -30,6 +31,7 @@ o_py_test(
     deps = [
         "//mlody/common:common_lib",
         "//mlody/common/image_builder/phases:phases_lib",  # keep
+        "@pip//pyfakefs",
         "@pip//pytest",
     ],
 )

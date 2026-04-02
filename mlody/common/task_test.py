@@ -6,9 +6,9 @@ from textwrap import dedent
 
 import pytest
 
-from common.python.starlarkish.core.struct import Struct
-from common.python.starlarkish.evaluator.evaluator import Evaluator
-from common.python.starlarkish.evaluator.testing import InMemoryFS
+from starlarkish.core.struct import Struct
+from starlarkish.evaluator.evaluator import Evaluator
+from starlarkish.evaluator.testing import InMemoryFS
 
 _THIS_DIR = Path(__file__).parent
 _RULE_MLODY = (_THIS_DIR.parent / "core" / "rule.mlody").read_text()

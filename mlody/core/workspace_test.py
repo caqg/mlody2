@@ -203,7 +203,7 @@ class TestResolve:
             ws.resolve("@bert//models:lr.nonexistent_field")
 
     def test_resolve_workspace_attr_returns_value_struct(self, project: Path) -> None:
-        from common.python.starlarkish.core.struct import Struct
+        from starlarkish.core.struct import Struct
 
         ws = Workspace(monorepo_root=project)
         ws.load()

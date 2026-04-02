@@ -6,7 +6,7 @@ import dataclasses
 
 import pytest
 
-from common.python.starlarkish.core.struct import struct
+from starlarkish.core.struct import struct
 from mlody.core.targets import TargetAddress, parse_target, resolve_target_value
 
 

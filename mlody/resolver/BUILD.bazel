@@ -21,6 +21,7 @@ o_py_test(
     srcs = ["errors_test.py"],
     deps = [
         ":resolver_lib",
+        "//common/python/starlarkish",
         "@pip//pytest",
     ],
 )
@@ -30,6 +31,7 @@ o_py_test(
     srcs = ["git_client_test.py"],
     deps = [
         ":resolver_lib",
+        "//common/python/starlarkish",
         "@pip//pytest",
     ],
 )
@@ -39,6 +41,7 @@ o_py_test(
     srcs = ["cache_test.py"],
     deps = [
         ":resolver_lib",
+        "//common/python/starlarkish",
         "@pip//pytest",
     ],
 )
@@ -48,6 +51,7 @@ o_py_test(
     srcs = ["resolver_test.py"],
     deps = [
         ":resolver_lib",
+        "//common/python/starlarkish",
         "//mlody/db:db_lib",  # keep — resolver_test queries SQLite directly after resolve_workspace
         "@pip//pytest",
     ],

@@ -3,11 +3,15 @@ load("//build/bzl:python.bzl", "o_py_library", "o_py_test")
 o_py_library(
     name = "evaluator_lib",
     srcs = [
+        "__init__.py",
         "evaluator.py",
         "testing.py",
     ],
     visibility = ["//:__subpackages__"],
-    deps = ["//common/python/starlarkish/core:core_lib"],
+    deps = [
+        "//common/python:python_pkg",
+        "//common/python/starlarkish/core:core_lib",
+    ],
 )
 
 o_py_library(

@@ -1,7 +1,7 @@
 import pytest
 import pickle
 from types import MappingProxyType
-from common.python.starlarkish.core.struct import struct, Struct
+from starlarkish.core.struct import struct, Struct
 
 def test_basic_creation_and_access():
     """Tests basic struct creation and attribute access."""

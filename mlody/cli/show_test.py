@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
-from common.python.starlarkish.core.struct import struct
+from starlarkish.core.struct import struct
 
 from mlody.cli.main import cli
 from mlody.cli.show import show_fn
