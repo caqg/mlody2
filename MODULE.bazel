@@ -59,7 +59,6 @@ oci.pull(
     ],
 )
 use_repo(oci, "distroless_base", "distroless_base_linux_amd64", "distroless_base_linux_arm64")
-
 oci.pull(
     name = "distroless_python3",
     # gcr.io/distroless/python3-debian12 pinned at a stable digest for reproducibility.
@@ -71,7 +70,6 @@ oci.pull(
     ],
 )
 use_repo(oci, "distroless_python3", "distroless_python3_linux_amd64", "distroless_python3_linux_arm64")
-
 oci.pull(
     name = "debian_slim",
     # docker.io/library/debian:12-slim — has bash, needed for aspect_rules_py
@@ -85,6 +83,18 @@ oci.pull(
     tag = "12-slim",
 )
 use_repo(oci, "debian_slim", "debian_slim_linux_amd64", "debian_slim_linux_arm64")
+##
+
+####
+# Copybara version override — BCR only carries 0.0.0-20240326-6485af6; use
+# archive_override to pin to the 2026-03-30 release without waiting for BCR.
+# The bazel_dep version in misc.MODULE.bazel is superseded by this override.
+archive_override(
+    module_name = "copybara",
+    integrity = "sha256-b+P4WPdc2JBbJXO8JGW6pbAP6Qqyo59p1CqKENHtAdw=",
+    strip_prefix = "copybara-20260330",
+    urls = ["https://github.com/google/copybara/archive/refs/tags/v20260330.tar.gz"],
+)
 ##
 
 ####
