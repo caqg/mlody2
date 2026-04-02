@@ -63,3 +63,13 @@ o_py_test(
         "@pip//pytest",
     ],
 )
+
+o_py_test(
+    name = "push_phase_test",
+    srcs = ["push_phase_test.py"],
+    deps = [
+        "//mlody/common:common_lib",
+        "//mlody/common/image_builder/phases:phases_lib",  # keep
+        "@pip//pytest",
+    ],
+)
