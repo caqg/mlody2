@@ -60,11 +60,20 @@ def verify_monorepo_root() -> Path:
     help="Path to roots.mlody (default: mlody/roots.mlody)",
 )
 @click.option("--verbose", is_flag=True, default=False, help="Increase output verbosity")
+@click.option(
+    "--full-workspace",
+    is_flag=True,
+    default=False,
+    help="Load all .mlody files, including files normally skipped by default.",
+)
 @click.pass_context
-def cli(ctx: click.Context, roots: Path | None, verbose: bool) -> None:
+def cli(
+    ctx: click.Context, roots: Path | None, verbose: bool, full_workspace: bool
+) -> None:
     """mlody — ML pipeline framework CLI."""
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
+    ctx.obj["full_workspace"] = full_workspace
     _configure_logging(verbose)
 
     # Allow tests to inject pre-built context objects without triggering

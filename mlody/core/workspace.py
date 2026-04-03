@@ -17,6 +17,7 @@ from mlody.core.source_parser import extract_entity_ranges
 from mlody.core.targets import TargetAddress, parse_target, resolve_target_value
 
 _logger = logging.getLogger(__name__)
+_DEFAULT_SKIPPED_MLODY_PATHS = ("mlody/common/sandbox.mlody",)
 
 
 def force(v: object) -> object:
@@ -71,11 +72,19 @@ class Workspace:
         self,
         monorepo_root: Path,
         roots_file: Path | None = None,
+        full_workspace: bool = False,
+        skipped_mlody_paths: tuple[str, ...] | list[str] | None = None,
         print_fn: Callable[..., None] = print,
         console: Console | None = None,
     ) -> None:
         self._monorepo_root = monorepo_root
         self._roots_file = roots_file or (monorepo_root / "mlody" / "roots.mlody")
+        self._full_workspace = full_workspace
+        self._skipped_mlody_paths = tuple(
+            skipped_mlody_paths
+            if skipped_mlody_paths is not None
+            else _DEFAULT_SKIPPED_MLODY_PATHS
+        )
         self._console = console if console is not None else Console()
         self._evaluator = Evaluator(
             root=monorepo_root,
@@ -123,6 +132,29 @@ class Workspace:
             roots=sorted(self._root_infos.keys()),
         )
 
+    def _is_skipped_mlody_file(self, mlody_file: Path) -> bool:
+        """Return True when a file matches the configured skip patterns.
+
+        Pattern rules:
+        - `path/to/file.mlody` skips exactly that file.
+        - `path/...` skips all files under `path/`.
+        """
+        rel = mlody_file.relative_to(self._monorepo_root).as_posix()
+        for raw_pattern in self._skipped_mlody_paths:
+            pattern = raw_pattern.strip().lstrip("./").lstrip("/")
+            if not pattern:
+                continue
+            if pattern.endswith("/..."):
+                prefix = pattern[:-4].rstrip("/")
+                if not prefix:
+                    return True
+                if rel.startswith(f"{prefix}/"):
+                    return True
+                continue
+            if rel == pattern:
+                return True
+        return False
+
     def load(self, verbose: bool = False) -> None:
         """Execute two-phase loading of pipeline definitions."""
         # Phase 1: Root discovery
@@ -157,6 +189,9 @@ class Workspace:
             if not root_abs.is_dir():
                 continue
             for mlody_file in sorted(root_abs.glob("**/*.mlody")):
+                if not self._full_workspace and self._is_skipped_mlody_file(mlody_file):
+                    _logger.debug("Skipping %s due to workspace skip list", mlody_file)
+                    continue
                 if mlody_file in self._evaluator.loaded_files:
                     continue
                 try:

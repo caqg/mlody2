@@ -95,6 +95,7 @@ def show_fn(
     label: str,
     monorepo_root: Path,
     roots_file: Path | None = None,
+    full_workspace: bool = False,
     print_fn: Callable[..., None] = print,
     verbose: bool = False,
 ) -> object:
@@ -107,6 +108,7 @@ def show_fn(
         label,
         monorepo_root=monorepo_root,
         roots_file=roots_file,
+        full_workspace=full_workspace,
         print_fn=print_fn,
         verbose=verbose,
     )
@@ -250,6 +252,7 @@ def show(ctx: click.Context, targets: tuple[str, ...]) -> None:
     has_error = False
 
     verbose: bool = ctx.obj.get("verbose", False)
+    full_workspace: bool = ctx.obj.get("full_workspace", False)
 
     for target in targets:
         try:
@@ -257,6 +260,7 @@ def show(ctx: click.Context, targets: tuple[str, ...]) -> None:
                 target,
                 monorepo_root=monorepo_root,
                 roots_file=roots,
+                full_workspace=full_workspace,
                 verbose=verbose,
             )
             if resolved_sha is not None:

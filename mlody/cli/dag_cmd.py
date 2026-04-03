@@ -200,8 +200,13 @@ def dag_cmd(ctx: click.Context, label: str | None, gui: bool) -> None:
     monorepo_root: Path = ctx.obj["monorepo_root"]
     roots: Path | None = ctx.obj.get("roots")
     verbose: bool = ctx.obj.get("verbose", False)
+    full_workspace: bool = ctx.obj.get("full_workspace", False)
 
-    workspace = Workspace(monorepo_root=monorepo_root, roots_file=roots)
+    workspace = Workspace(
+        monorepo_root=monorepo_root,
+        roots_file=roots,
+        full_workspace=full_workspace,
+    )
     try:
         workspace.load(verbose=verbose)
     except WorkspaceLoadError as exc:

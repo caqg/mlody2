@@ -164,6 +164,67 @@ class TestTwoPhaseLoading:
         assert models_path in module_globals
         assert "builtins" in module_globals[models_path]
 
+    def test_default_skip_list_skips_sandbox_mlody(
+        self, fs: FakeFilesystem, project: Path
+    ) -> None:
+        (project / "mlody/roots.mlody").write_text(
+            'load("//mlody/core/builtins.mlody", "root")\n'
+            'root(name="lexica", path="//mlody/teams/lexica", description="text ML team")\n'
+            'root(name="common", path="//mlody/common", description="common")\n'
+        )
+        fs.create_file(
+            str(project / "mlody/common/sandbox.mlody"),
+            contents='builtins.register("root", struct(name="sandbox_only", value=1))',
+        )
+        ws = Workspace(monorepo_root=project)
+        ws.load()
+        assert "mlody/common/sandbox:sandbox_only" not in ws.evaluator.roots
+
+    def test_full_workspace_loads_sandbox_mlody(
+        self, fs: FakeFilesystem, project: Path
+    ) -> None:
+        (project / "mlody/roots.mlody").write_text(
+            'load("//mlody/core/builtins.mlody", "root")\n'
+            'root(name="lexica", path="//mlody/teams/lexica", description="text ML team")\n'
+            'root(name="common", path="//mlody/common", description="common")\n'
+        )
+        fs.create_file(
+            str(project / "mlody/common/sandbox.mlody"),
+            contents='builtins.register("root", struct(name="sandbox_only", value=1))',
+        )
+        ws = Workspace(monorepo_root=project, full_workspace=True)
+        ws.load()
+        assert "mlody/common/sandbox:sandbox_only" in ws.evaluator.roots
+
+    def test_skip_pattern_with_ellipsis_skips_subtree(
+        self, fs: FakeFilesystem, project: Path
+    ) -> None:
+        (project / "mlody/roots.mlody").write_text(
+            'load("//mlody/core/builtins.mlody", "root")\n'
+            'root(name="lexica", path="//mlody/teams/lexica", description="text ML team")\n'
+            'root(name="common", path="//mlody/common", description="common")\n'
+        )
+        fs.create_file(
+            str(project / "mlody/common/skipme/a.mlody"),
+            contents='builtins.register("root", struct(name="skip_a", value=1))',
+        )
+        fs.create_file(
+            str(project / "mlody/common/skipme/nested/b.mlody"),
+            contents='builtins.register("root", struct(name="skip_b", value=2))',
+        )
+        fs.create_file(
+            str(project / "mlody/common/keep.mlody"),
+            contents='builtins.register("root", struct(name="keep", value=3))',
+        )
+        ws = Workspace(
+            monorepo_root=project,
+            skipped_mlody_paths=["mlody/common/skipme/..."],
+        )
+        ws.load()
+        assert "mlody/common/skipme/a:skip_a" not in ws.evaluator.roots
+        assert "mlody/common/skipme/nested/b:skip_b" not in ws.evaluator.roots
+        assert "mlody/common/keep:keep" in ws.evaluator.roots
+
 
 # ---------------------------------------------------------------------------
 # Target resolution

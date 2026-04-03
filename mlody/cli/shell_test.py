@@ -42,7 +42,11 @@ class TestBuildReplNamespace:
             result = namespace["show"]("@bert//:lr")
 
         assert result == 0.001
-        mock_show_fn.assert_called_once_with("@bert//:lr", monorepo_root=tmp_path)
+        mock_show_fn.assert_called_once_with(
+            "@bert//:lr",
+            monorepo_root=tmp_path,
+            full_workspace=False,
+        )
 
     def test_show_resolves_multiple_targets_returns_list(self, tmp_path: Path) -> None:
         ws = MagicMock()

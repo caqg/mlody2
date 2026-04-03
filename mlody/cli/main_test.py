@@ -48,6 +48,7 @@ def _test_probe(ctx: click.Context) -> None:
     # Scenario: cli group no longer constructs workspace — probe checks monorepo_root
     click.echo(f"monorepo_root={ctx.obj.get('monorepo_root') is not None}")
     click.echo(f"verbose={ctx.obj.get('verbose')}")
+    click.echo(f"full_workspace={ctx.obj.get('full_workspace')}")
     click.echo(f"workspace={ctx.obj.get('workspace') is not None}")
 
 
@@ -152,6 +153,34 @@ class TestVerboseFlag:
 
         assert result.exit_code == 0
         assert "verbose=False" in result.output
+
+
+class TestFullWorkspaceFlag:
+    """Requirement: Global CLI options — --full-workspace."""
+
+    def test_full_workspace_stored_on_context(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "MODULE.bazel").touch()
+        monkeypatch.chdir(tmp_path)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--full-workspace", "_test_probe"])
+
+        assert result.exit_code == 0
+        assert "full_workspace=True" in result.output
+
+    def test_full_workspace_defaults_to_false(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "MODULE.bazel").touch()
+        monkeypatch.chdir(tmp_path)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["_test_probe"])
+
+        assert result.exit_code == 0
+        assert "full_workspace=False" in result.output
 
 
 # ---------------------------------------------------------------------------

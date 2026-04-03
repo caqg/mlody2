@@ -31,7 +31,9 @@ def _get_history_path() -> Path:
     return history_file
 
 
-def _build_repl_namespace(workspace: Workspace, monorepo_root: Path) -> dict[str, object]:
+def _build_repl_namespace(
+    workspace: Workspace, monorepo_root: Path, full_workspace: bool = False
+) -> dict[str, object]:
     """Construct the REPL namespace exposed to the user.
 
     Exposes `show` as a callable that accepts a raw label string and resolves
@@ -39,7 +41,14 @@ def _build_repl_namespace(workspace: Workspace, monorepo_root: Path) -> dict[str
     also exposed directly for advanced inspection of the cwd workspace.
     """
     def _show(*labels: str) -> object | list[object]:
-        results = [show_fn(label, monorepo_root=monorepo_root) for label in labels]
+        results = [
+            show_fn(
+                label,
+                monorepo_root=monorepo_root,
+                full_workspace=full_workspace,
+            )
+            for label in labels
+        ]
         if len(results) == 1:
             return results[0]
         return results
@@ -78,13 +87,15 @@ def shell(ctx: click.Context) -> None:
     if "workspace" in ctx.obj:
         workspace: Workspace = ctx.obj["workspace"]
         monorepo_root: Path = ctx.obj.get("monorepo_root", Path.cwd())
+        full_workspace: bool = ctx.obj.get("full_workspace", False)
         history_file = _get_history_path()
-        namespace = _build_repl_namespace(workspace, monorepo_root)
+        namespace = _build_repl_namespace(workspace, monorepo_root, full_workspace)
         _launch_repl(namespace, history_file)
         return
 
     monorepo_root = ctx.obj["monorepo_root"]
     roots: Path | None = ctx.obj.get("roots")
+    full_workspace: bool = ctx.obj.get("full_workspace", False)
 
     from mlody.resolver import resolve_workspace
 
@@ -95,7 +106,8 @@ def shell(ctx: click.Context) -> None:
         "@//:_shell_init",
         monorepo_root=monorepo_root,
         roots_file=roots,
+        full_workspace=full_workspace,
     )
     history_file = _get_history_path()
-    namespace = _build_repl_namespace(workspace_obj, monorepo_root)
+    namespace = _build_repl_namespace(workspace_obj, monorepo_root, full_workspace)
     _launch_repl(namespace, history_file)

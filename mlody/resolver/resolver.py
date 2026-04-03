@@ -248,6 +248,7 @@ def resolve_workspace(
     label: str,
     monorepo_root: Path,
     roots_file: Path | None = None,
+    full_workspace: bool = False,
     print_fn: Callable[..., None] = print,
     git_client: GitClient | None = None,
     cache_root: Path | None = None,
@@ -274,6 +275,7 @@ def resolve_workspace(
         ws = Workspace(
             monorepo_root=monorepo_root,
             roots_file=roots_file,
+            full_workspace=full_workspace,
             print_fn=print_fn,
         )
         ws.load(verbose=verbose)
@@ -303,6 +305,7 @@ def resolve_workspace(
     ws = Workspace(
         monorepo_root=dest,
         roots_file=None,
+        full_workspace=full_workspace,
         print_fn=print_fn,
     )
     try:

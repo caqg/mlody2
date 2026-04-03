@@ -46,6 +46,7 @@ class TestShowFn:
             "@bert//models:lr",
             monorepo_root=tmp_path,
             roots_file=None,
+            full_workspace=False,
             print_fn=print,
             verbose=False,
         )
@@ -139,6 +140,7 @@ class TestShowCommandCommittoidTarget:
             "main|@bert//models:lr",
             monorepo_root=tmp_path,
             roots_file=None,
+            full_workspace=False,
             verbose=False,
         )
 

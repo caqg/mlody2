@@ -247,6 +247,7 @@ class TestResolveWorkspaceCwdPath:
         mock_ws_cls.assert_called_once_with(
             monorepo_root=tmp_path,
             roots_file=None,
+            full_workspace=False,
             print_fn=print,
         )
         mock_ws.load.assert_called_once()
@@ -295,6 +296,7 @@ class TestResolveWorkspaceCommittoidPath:
         mock_ws_cls.assert_called_once_with(
             monorepo_root=dest,
             roots_file=None,
+            full_workspace=False,
             print_fn=print,
         )
         mock_ws.load.assert_called_once()
