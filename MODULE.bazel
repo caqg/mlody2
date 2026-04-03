@@ -21,16 +21,7 @@ include("//build/modules:cpp.MODULE.bazel")
 include("//build/modules:python.MODULE.bazel")
 ##
 
-####
-# Go
-include("//build/modules:go.MODULE.bazel")
-##
 
-####
-# Java
-# (we don't do Java, but copybara requires java 10+ and bazel's default is java 8)
-##
-include("//build/modules:java.MODULE.bazel")
 
 ####
 # LaTeX support

@@ -13,6 +13,7 @@ copybara_workflow(
         "build/bzl/BUILD.bazel",
         "build/bzl/python.bzl",
         "build/modules/BUILD.bazel",
+        "build/modules/cpp.MODULE.bazel",
         "build/modules/misc.MODULE.bazel",
         "build/modules/python.MODULE.bazel",
         "build/modules/tools.MODULE.bazel",
