@@ -13,7 +13,10 @@ def _validate_value_refs(attr_name, items):
 
 
 def _action_impl(ctx):
-    inputs  = _validate_value_refs("inputs",  ctx.attr.inputs)
+    inputs_raw = python.getattr(ctx.attr, "inputs", [])
+    if inputs_raw == None:
+        inputs_raw = []
+    inputs  = _validate_value_refs("inputs", inputs_raw)
     outputs = _validate_value_refs("outputs", ctx.attr.outputs)
     config_raw = python.getattr(ctx.attr, "config", {})
     if config_raw == None:
@@ -39,7 +42,7 @@ action = rule(
     kind           = "action",
     attrs          = {
         "name":    attr(type="string"),
-        "inputs":  attr(type="value_ref_list"),
+        "inputs":  attr(type="value_ref_list", mandatory=False),
         "outputs": attr(type="value_ref_list"),
         "config":  attr(type="map", mandatory=False),
     },

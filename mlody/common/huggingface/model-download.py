@@ -6,12 +6,13 @@ import json
 import multiprocessing
 import os
 import requests
+import sys
 import time
 from pathlib import Path
 
-from huggingface_hub import model_info
+from huggingface_hub import HfApi, model_info
 
-HF_FILE = "https://huggingface.co/{repo}/resolve/main/{path}"
+HF_FILE = "https://huggingface.co/{repo}/resolve/{revision}/{path}"
 SEGMENT_SIZE = 64 * 1024 * 1024
 
 
@@ -106,23 +107,23 @@ def segmented_download(url, dest, token, workers):
 # -----------------------------------------
 
 
-def download_file(repo, file_path, dest, token, workers):
+def download_file(repo, revision, file_path, dest, token, workers):
 
-    url = HF_FILE.format(repo=repo, path=file_path)
+    url = HF_FILE.format(repo=repo, revision=revision, path=file_path)
 
     out = dest / file_path
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    r = requests.head(url)
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    r = requests.head(url, headers=headers)
     size = int(r.headers.get("Content-Length", 0))
 
     if size > 200 * 1024 * 1024:
         segmented_download(url, out, token, workers)
     else:
-        headers = {}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-
         with requests.get(url, headers=headers, stream=True) as r:
             with open(out, "wb") as f:
                 for chunk in r.iter_content(1024 * 1024):
@@ -134,7 +135,7 @@ def download_file(repo, file_path, dest, token, workers):
 # -----------------------------------------
 
 
-def download_repo(repo, dest, files, workers, token):
+def download_repo(repo, revision, dest, files, workers, token):
 
     dest.mkdir(parents=True, exist_ok=True)
 
@@ -144,7 +145,9 @@ def download_repo(repo, dest, files, workers, token):
         futures = []
 
         for f in files:
-            futures.append(pool.submit(download_file, repo, f, dest, token, workers))
+            futures.append(
+                pool.submit(download_file, repo, revision, f, dest, token, workers)
+            )
 
         for i, fut in enumerate(concurrent.futures.as_completed(futures), 1):
             fut.result()
@@ -152,6 +155,56 @@ def download_repo(repo, dest, files, workers, token):
 
     elapsed = time.time() - start
     print(f"\nFinished in {elapsed:.1f}s")
+
+
+def list_tags(repo, token):
+
+    api = HfApi(token=token)
+    refs = api.list_repo_refs(repo_id=repo, repo_type="model")
+
+    tags = refs.tags or []
+
+    if not tags:
+        print("No tags found.")
+        return
+
+    print(f"Found {len(tags)} tag(s):")
+    for tag in tags:
+        target_commit = getattr(tag, "target_commit", None) or getattr(
+            tag, "commit_id", ""
+        )
+        print(f"{tag.name}\t{target_commit}")
+
+
+def list_refs(repo, token):
+
+    api = HfApi(token=token)
+    refs = api.list_repo_refs(repo_id=repo, repo_type="model")
+
+    branches = refs.branches or []
+    tags = refs.tags or []
+
+    if not branches and not tags:
+        print("No branches or tags found.")
+        return
+
+    print(f"Found {len(branches)} branch(es) and {len(tags)} tag(s).")
+
+    if branches:
+        print("\nBranches:")
+        for branch in branches:
+            target_commit = getattr(branch, "target_commit", None) or getattr(
+                branch, "commit_id", ""
+            )
+            print(f"{branch.name}\t{target_commit}")
+
+    if tags:
+        print("\nTags:")
+        for tag in tags:
+            target_commit = getattr(tag, "target_commit", None) or getattr(
+                tag, "commit_id", ""
+            )
+            print(f"{tag.name}\t{target_commit}")
 
 
 # -----------------------------------------
@@ -162,28 +215,78 @@ def download_repo(repo, dest, files, workers, token):
 def main():
 
     p = argparse.ArgumentParser()
+    subparsers = p.add_subparsers(dest="command")
 
-    p.add_argument("repo")
-    p.add_argument("-o", "--out", default="models")
-    p.add_argument("-w", "--workers", type=int)
+    p_download = subparsers.add_parser("download", help="Download a model snapshot")
+    p_download.add_argument("repo")
+    p_download.add_argument("-o", "--out", default="models")
+    p_download.add_argument("-w", "--workers", type=int)
+    p_download.add_argument(
+        "-r",
+        "--revision",
+        default=None,
+        help="Specific model revision to download (commit SHA, branch, or tag). Defaults to latest when omitted.",
+    )
 
-    args = p.parse_args()
+    p_tags = subparsers.add_parser("tags", help="List available tags for a model repo")
+    p_tags.add_argument("repo")
+    p_releases = subparsers.add_parser(
+        "releases", help="List available releases (tags) for a model repo"
+    )
+    p_releases.add_argument("repo")
+    p_refs = subparsers.add_parser(
+        "refs", help="List available branches and tags for a model repo"
+    )
+    p_refs.add_argument("repo")
 
-    repo = args.repo
-    base_out = Path(args.out)
+    # Backward compatibility: allow `model-download.py <repo> ...` without explicit subcommand.
+    argv = sys.argv[1:]
+    if argv and argv[0] not in {
+        "download",
+        "tags",
+        "releases",
+        "refs",
+        "-h",
+        "--help",
+    }:
+        argv = ["download"] + argv
+
+    args = p.parse_args(argv)
 
     token = os.environ.get("HF_TOKEN")
 
+    if args.command is None:
+        p.print_help()
+        return
+
+    if args.command in {"tags", "releases"}:
+        if args.command == "releases":
+            print("Hugging Face releases are represented as git tags.\n")
+        list_tags(args.repo, token)
+        return
+    if args.command == "refs":
+        list_refs(args.repo, token)
+        return
+
+    repo = args.repo
+    requested_revision = args.revision
+    base_out = Path(args.out)
+
     print("Fetching model info...")
 
-    info = model_info(repo)
+    info = model_info(repo, revision=requested_revision, token=token)
 
     print("\nModel info:")
     print(info)
 
     sha = info.sha
 
-    print(f"\nLatest commit SHA: {sha}")
+    print(f"\nResolved commit SHA: {sha}")
+
+    if requested_revision:
+        print(f"Requested revision: {requested_revision}")
+    else:
+        print("Requested revision: latest (default)")
 
     model_dir = base_out / sha
 
@@ -215,7 +318,7 @@ def main():
 
     print("\nDownloading files...")
 
-    download_repo(repo, model_dir, files, workers, token)
+    download_repo(repo, sha, model_dir, files, workers, token)
 
 
 if __name__ == "__main__":
