@@ -18,13 +18,10 @@ def _action_impl(ctx):
         inputs_raw = []
     inputs  = _validate_value_refs("inputs", inputs_raw)
     outputs = _validate_value_refs("outputs", ctx.attr.outputs)
-    config_raw = python.getattr(ctx.attr, "config", {})
+    config_raw = python.getattr(ctx.attr, "config", [])
     if config_raw == None:
-        config_raw = {}
-    if type(config_raw) == "struct":
-        config = config_raw
-    else:
-        config = Struct(**config_raw)
+        config_raw = []
+    config = _validate_value_refs("config", config_raw)
 
     action_struct = Struct(
         kind    = "action",
@@ -44,6 +41,6 @@ action = rule(
         "name":    attr(type="string"),
         "inputs":  attr(type="value_ref_list", mandatory=False),
         "outputs": attr(type="value_ref_list"),
-        "config":  attr(type="map", mandatory=False),
+        "config":  attr(type="value_ref_list", mandatory=False),
     },
 )

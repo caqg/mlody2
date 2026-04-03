@@ -55,8 +55,11 @@ def _lineage_event(author, timestamp, reason):
 
 
 def _value_impl(ctx):
-    type_ref = _resolve_type_ref(ctx.attr.type)
-    loc_ref = _resolve_location_ref(ctx.attr.location)
+    type_raw = python.getattr(ctx.attr, "type", None)
+    loc_raw = python.getattr(ctx.attr, "location", None)
+
+    type_ref = _resolve_type_ref(type_raw) if type_raw != None else None
+    loc_ref = _resolve_location_ref(loc_raw) if loc_raw != None else None
 
     value_struct = Struct(
         kind="value",
@@ -75,8 +78,8 @@ value = rule(
     kind="value",
     attrs={
         "name":     attr(type="string"),
-        "type":     attr(type="type_ref"),
-        "location": attr(type="location_ref"),
+        "type":     attr(type="type_ref", mandatory=False),
+        "location": attr(type="location_ref", mandatory=False),
         "source":   attr(type="string", mandatory=False),
     },
 )

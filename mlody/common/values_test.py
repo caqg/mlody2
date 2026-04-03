@@ -179,3 +179,22 @@ def test_value_lineage_is_a_list() -> None:
     ev = _eval('value(name="v", type=integer(), location=s3())')
     v = ev._values_by_name["v"]
     assert isinstance(v._lineage, list)
+
+
+# ---------------------------------------------------------------------------
+# TC-011: value() allows partial declarations (type/location optional)
+# ---------------------------------------------------------------------------
+
+
+def test_value_allows_missing_location() -> None:
+    ev = _eval('value(name="v", type=integer())')
+    v = ev._values_by_name["v"]
+    assert v.type.kind == "type"
+    assert v.location is None
+
+
+def test_value_allows_missing_type() -> None:
+    ev = _eval('value(name="v", location=s3())')
+    v = ev._values_by_name["v"]
+    assert v.type is None
+    assert v.location.kind == "location"

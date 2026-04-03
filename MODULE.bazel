@@ -114,5 +114,6 @@ http_archive(
     patches = ["//third_party/whisper/patches:001-cmake-binary-dir.patch"],
     strip_prefix = "whisper.cpp-1.7.1",  # Match the tag version
     urls = ["https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.7.1.tar.gz"],
+    sha256 = "97f19a32212f2f215e538ee37a16ff547aaebc54817bd8072034e02466ce6d55",
 )
 ##

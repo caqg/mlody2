@@ -6,7 +6,6 @@ from textwrap import dedent
 
 import pytest
 
-from starlarkish.core.struct import Struct
 from starlarkish.evaluator.evaluator import Evaluator
 from starlarkish.evaluator.testing import InMemoryFS
 
@@ -99,31 +98,33 @@ def test_task_stores_action_inputs_outputs() -> None:
 
 
 # ---------------------------------------------------------------------------
-# TC-004: config defaults to empty map
+# TC-004: config defaults to empty list
 # ---------------------------------------------------------------------------
 
 
-def test_task_config_defaults_to_empty_map() -> None:
+def test_task_config_defaults_to_empty_list() -> None:
     ev = _eval(
         'action(name="act", inputs=[], outputs=[])\n'
         'task(name="t", inputs=[], outputs=[], action="act")\n'
     )
     t = ev._tasks_by_name["t"]
-    assert t.config == Struct()
+    assert t.config == []
 
 
 # ---------------------------------------------------------------------------
-# TC-005: config stored when provided
+# TC-005: config stores value refs when provided
 # ---------------------------------------------------------------------------
 
 
-def test_task_config_stored() -> None:
+def test_task_config_value_refs_stored() -> None:
     ev = _eval(
+        'value(name="cfg", type=integer(), location=s3())\n'
         'action(name="act", inputs=[], outputs=[])\n'
-        'task(name="t", inputs=[], outputs=[], action="act", config={"epochs": 10})\n'
+        'task(name="t", inputs=[], outputs=[], action="act", config=["cfg"])\n'
     )
     t = ev._tasks_by_name["t"]
-    assert t.config.epochs == 10
+    assert len(t.config) == 1
+    assert t.config[0].name == "cfg"
 
 
 # ---------------------------------------------------------------------------
@@ -193,3 +194,117 @@ def test_forward_reference() -> None:
     a = ev._actions_by_name["a"]
     assert t.action is a
     assert t.inputs[0] is ev._values_by_name["x"]
+
+
+# ---------------------------------------------------------------------------
+# TC-011: task/action input values are unified bidirectionally
+# ---------------------------------------------------------------------------
+
+
+def test_task_action_input_value_fields_are_unified_both_ways() -> None:
+    ev = _eval(
+        'task(\n'
+        '  name="t",\n'
+        '  inputs=[struct(kind="value", name="inp", location=s3())],\n'
+        '  outputs=[],\n'
+        '  action=action(\n'
+        '    name="act",\n'
+        '    inputs=[struct(kind="value", name="inp", type=integer())],\n'
+        '    outputs=[]\n'
+        '  )\n'
+        ')\n'
+    )
+    t = ev._tasks_by_name["t"]
+    assert t.inputs[0].type.kind == "type"
+    assert t.inputs[0].location.kind == "location"
+    # Two-way unification: task-side field also fills action-side field.
+    assert t.action.inputs[0].type.kind == "type"
+    assert t.action.inputs[0].location.kind == "location"
+
+
+# ---------------------------------------------------------------------------
+# TC-012: task/action output values are unified bidirectionally
+# ---------------------------------------------------------------------------
+
+
+def test_task_action_output_value_fields_are_unified_both_ways() -> None:
+    ev = _eval(
+        'task(\n'
+        '  name="t",\n'
+        '  inputs=[],\n'
+        '  outputs=[struct(kind="value", name="out", type=string())],\n'
+        '  action=action(\n'
+        '    name="act",\n'
+        '    inputs=[],\n'
+        '    outputs=[struct(kind="value", name="out", location=s3())]\n'
+        '  )\n'
+        ')\n'
+    )
+    t = ev._tasks_by_name["t"]
+    assert t.outputs[0].type.kind == "type"
+    assert t.outputs[0].location.kind == "location"
+    assert t.action.outputs[0].type.kind == "type"
+    assert t.action.outputs[0].location.kind == "location"
+
+
+# ---------------------------------------------------------------------------
+# TC-013: if both sides omit required value fields, task() raises ValueError
+# ---------------------------------------------------------------------------
+
+
+def test_task_value_missing_required_fields_on_both_sides_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="missing required field"):
+        _eval(
+            'task(\n'
+            '  name="t",\n'
+            '  inputs=[struct(kind="value", name="inp")],\n'
+            '  outputs=[],\n'
+            '  action=action(\n'
+            '    name="act",\n'
+            '    inputs=[struct(kind="value", name="inp")],\n'
+            '    outputs=[]\n'
+            '  )\n'
+            ')\n'
+        )
+
+
+# ---------------------------------------------------------------------------
+# TC-014: unification also works when action is referenced by string label
+# ---------------------------------------------------------------------------
+
+
+def test_task_action_string_ref_value_fields_are_unified() -> None:
+    ev = _eval(
+        'action(\n'
+        '  name="act",\n'
+        '  inputs=[struct(kind="value", name="inp", type=integer())],\n'
+        '  outputs=[]\n'
+        ')\n'
+        'task(name="t", inputs=[struct(kind="value", name="inp", location=s3())], outputs=[], action="act")\n'
+    )
+    t = ev._tasks_by_name["t"]
+    assert t.inputs[0].type.kind == "type"
+    assert t.inputs[0].location.kind == "location"
+
+
+# ---------------------------------------------------------------------------
+# TC-015: semantically equal locations across task/action do not conflict
+# ---------------------------------------------------------------------------
+
+
+def test_task_action_equal_location_specs_do_not_conflict() -> None:
+    ev = _eval(
+        'task(\n'
+        '  name="t",\n'
+        '  inputs=[],\n'
+        '  outputs=[value(name="model", type=string(), location=posix(path="/tmp/model"))],\n'
+        '  action=action(\n'
+        '    name="act",\n'
+        '    inputs=[],\n'
+        '    outputs=[value(name="model", type=string(), location=posix(path="/tmp/model"))]\n'
+        '  )\n'
+        ')\n'
+    )
+    t = ev._tasks_by_name["t"]
+    assert t.outputs[0].location.kind == "location"
+    assert t.outputs[0].location.type == "posix"

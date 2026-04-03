@@ -544,21 +544,23 @@ class Evaluator:
                 return self._lookup("action", v)
             return v  # type: ignore[return-value]
 
-        # Resolve actions: string labels in inputs/outputs → value structs
+        # Resolve actions: string labels in inputs/outputs/config → value structs
         for key, entity in list(self.actions.items()):
             fields = dict(entity.as_mapping())
             fields["inputs"] = [_resolve_value(v) for v in fields.get("inputs", [])]
             fields["outputs"] = [_resolve_value(v) for v in fields.get("outputs", [])]
+            fields["config"] = [_resolve_value(v) for v in fields.get("config", [])]
             new_entity = Struct(**fields)
             self.actions[key] = new_entity
             self._actions_by_name[entity.name] = new_entity
             self.all[f"action/{key}"] = new_entity
 
-        # Resolve tasks: string labels in inputs/outputs/action → entity structs
+        # Resolve tasks: string labels in inputs/outputs/config/action → entity structs
         for key, entity in list(self.tasks.items()):
             fields = dict(entity.as_mapping())
             fields["inputs"] = [_resolve_value(v) for v in fields.get("inputs", [])]
             fields["outputs"] = [_resolve_value(v) for v in fields.get("outputs", [])]
+            fields["config"] = [_resolve_value(v) for v in fields.get("config", [])]
             fields["action"] = _resolve_action(fields.get("action"))
             new_entity = Struct(**fields)
             self.tasks[key] = new_entity

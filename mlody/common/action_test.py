@@ -6,7 +6,6 @@ from textwrap import dedent
 
 import pytest
 
-from starlarkish.core.struct import Struct
 from starlarkish.evaluator.evaluator import Evaluator
 from starlarkish.evaluator.testing import InMemoryFS
 
@@ -107,25 +106,29 @@ def test_action_empty_inputs_and_outputs_allowed() -> None:
 
 
 # ---------------------------------------------------------------------------
-# TC-005: config defaults to empty map when omitted
+# TC-005: config defaults to empty list when omitted
 # ---------------------------------------------------------------------------
 
 
-def test_action_config_defaults_to_empty_map() -> None:
+def test_action_config_defaults_to_empty_list() -> None:
     ev = _eval('action(name="a", inputs=[], outputs=[])\n')
     a = ev._actions_by_name["a"]
-    assert a.config == Struct()
+    assert a.config == []
 
 
 # ---------------------------------------------------------------------------
-# TC-006: config is stored when provided
+# TC-006: config stores value refs when provided
 # ---------------------------------------------------------------------------
 
 
-def test_action_config_stored() -> None:
-    ev = _eval('action(name="a", inputs=[], outputs=[], config={"lr": 0.01})\n')
+def test_action_config_value_refs_stored() -> None:
+    ev = _eval(
+        'value(name="cfg", type=integer(), location=s3())\n'
+        'action(name="a", inputs=[], outputs=[], config=["cfg"])\n'
+    )
     a = ev._actions_by_name["a"]
-    assert a.config.lr == 0.01
+    assert len(a.config) == 1
+    assert a.config[0].name == "cfg"
 
 
 # ---------------------------------------------------------------------------
