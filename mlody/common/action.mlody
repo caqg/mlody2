@@ -24,6 +24,175 @@ def _validate_string_list(attr_name, items):
     return list(items)
 
 
+def _is_number(value):
+    return (
+        (isinstance(value, int) and not isinstance(value, bool))
+        or isinstance(value, float)
+    )
+
+
+def _require_number(attr_name, req_kind, field_name, value):
+    if not _is_number(value):
+        raise TypeError(
+            attr_name
+            + ": "
+            + req_kind
+            + " requirement field "
+            + repr(field_name)
+            + " must be numeric"
+        )
+
+
+def _require_string(attr_name, req_kind, field_name, value):
+    if not isinstance(value, str):
+        raise TypeError(
+            attr_name
+            + ": "
+            + req_kind
+            + " requirement field "
+            + repr(field_name)
+            + " must be a string"
+        )
+
+
+def _validate_requirement(attr_name, req):
+    if type(req) != "struct" or python.getattr(req, "kind", None) != "requirement":
+        raise TypeError(
+            attr_name
+            + ": each requirement must be a struct(kind='requirement')"
+        )
+    req_kind = python.getattr(req, "requirement", None)
+    if req_kind == None:
+        req_kind = python.getattr(req, "name", None)
+    if req_kind == None:
+        raise ValueError(attr_name + ": requirement missing 'requirement' field")
+
+    if req_kind == "memory":
+        _require_number(
+            attr_name, req_kind, "amount", python.getattr(req, "amount", None)
+        )
+        unit = python.getattr(req, "unit", None)
+        if unit != None:
+            _require_string(attr_name, req_kind, "unit", unit)
+        return req
+
+    if req_kind == "disk_io":
+        read_mbps = python.getattr(req, "read_mbps", None)
+        write_mbps = python.getattr(req, "write_mbps", None)
+        iops = python.getattr(req, "iops", None)
+        if read_mbps == None and write_mbps == None and iops == None:
+            raise ValueError(
+                attr_name
+                + ": disk_io requirement must define at least one of "
+                + "'read_mbps', 'write_mbps', or 'iops'"
+            )
+        if read_mbps != None:
+            _require_number(attr_name, req_kind, "read_mbps", read_mbps)
+        if write_mbps != None:
+            _require_number(attr_name, req_kind, "write_mbps", write_mbps)
+        if iops != None:
+            _require_number(attr_name, req_kind, "iops", iops)
+        return req
+
+    if req_kind == "network":
+        _require_number(
+            attr_name,
+            req_kind,
+            "bandwidth_mbps",
+            python.getattr(req, "bandwidth_mbps", None),
+        )
+        return req
+
+    if req_kind == "cpu":
+        cpu_count = python.getattr(req, "count", None)
+        _require_number(attr_name, req_kind, "count", cpu_count)
+        cpu_type = python.getattr(req, "type", None)
+        if cpu_type == None:
+            cpu_type = "*"
+        _require_string(attr_name, req_kind, "type", cpu_type)
+        return Struct(
+            kind="requirement",
+            requirement="cpu",
+            count=cpu_count,
+            type=cpu_type,
+        )
+
+    if req_kind == "gpu":
+        gpu_count = python.getattr(req, "count", None)
+        _require_number(attr_name, req_kind, "count", gpu_count)
+        gpu_type = python.getattr(req, "type", None)
+        if gpu_type == None:
+            gpu_type = "*"
+        _require_string(attr_name, req_kind, "type", gpu_type)
+        return Struct(
+            kind="requirement",
+            requirement="gpu",
+            count=gpu_count,
+            type=gpu_type,
+        )
+
+    raise ValueError(
+        attr_name
+        + ": unknown requirement kind "
+        + repr(req_kind)
+        + " (expected one of memory, disk_io, network, cpu, gpu)"
+    )
+
+
+def _validate_requirements(attr_name, items):
+    if not isinstance(items, list):
+        raise TypeError(attr_name + ": expected a list of requirement structs")
+    out = []
+    for item in items:
+        out.append(_validate_requirement(attr_name, item))
+    return out
+
+
+def memory_requirement(amount, unit="GiB"):
+    return Struct(
+        kind="requirement",
+        requirement="memory",
+        amount=amount,
+        unit=unit,
+    )
+
+
+def disk_io_requirement(read_mbps=None, write_mbps=None, iops=None):
+    return Struct(
+        kind="requirement",
+        requirement="disk_io",
+        read_mbps=read_mbps,
+        write_mbps=write_mbps,
+        iops=iops,
+    )
+
+
+def network_requirement(bandwidth_mbps):
+    return Struct(
+        kind="requirement",
+        requirement="network",
+        bandwidth_mbps=bandwidth_mbps,
+    )
+
+
+def cpu_requirement(count, type="*"):
+    return Struct(
+        kind="requirement",
+        requirement="cpu",
+        count=count,
+        type=type,
+    )
+
+
+def gpu_requirement(count, type="*"):
+    return Struct(
+        kind="requirement",
+        requirement="gpu",
+        count=count,
+        type=type,
+    )
+
+
 def _action_impl(ctx):
     inputs_raw = python.getattr(ctx.attr, "inputs", [])
     if inputs_raw == None:
@@ -34,6 +203,10 @@ def _action_impl(ctx):
     if config_raw == None:
         config_raw = []
     config = _validate_value_refs("config", config_raw)
+    requirements_raw = python.getattr(ctx.attr, "requirements", [])
+    if requirements_raw == None:
+        requirements_raw = []
+    requirements = _validate_requirements("requirements", requirements_raw)
     implementation = _validate_string_list("implementation", ctx.attr.implementation)
 
     action_struct = Struct(
@@ -42,6 +215,7 @@ def _action_impl(ctx):
         inputs  = inputs,
         outputs = outputs,
         config  = config,
+        requirements = requirements,
         implementation = implementation,
     )
     builtins.register(ctx.kind, action_struct)
@@ -56,6 +230,7 @@ action = rule(
         "inputs":  attr(type="value_ref_list", mandatory=False),
         "outputs": attr(type="value_ref_list"),
         "config":  attr(type="value_ref_list", mandatory=False),
+        "requirements": attr(mandatory=False),
         "implementation": attr(type="string_list"),
     },
 )

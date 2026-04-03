@@ -189,3 +189,101 @@ def test_action_implementation_stores_bazel_targets() -> None:
 def test_action_implementation_non_string_raises_type_error() -> None:
     with pytest.raises(TypeError):
         _eval('action(name="a", inputs=[], outputs=[], implementation=[1])\n')
+
+
+# ---------------------------------------------------------------------------
+# TC-012: requirements default to empty list when omitted
+# ---------------------------------------------------------------------------
+
+
+def test_action_requirements_default_to_empty_list() -> None:
+    ev = _eval(
+        'action(name="a", inputs=[], outputs=[], implementation=["//mlody/common:action_lib"])\n'
+    )
+    a = ev._actions_by_name["a"]
+    assert a.requirements == []
+
+
+# ---------------------------------------------------------------------------
+# TC-013: requirements stores declared resource requirements
+# ---------------------------------------------------------------------------
+
+
+def test_action_requirements_stored_for_supported_kinds() -> None:
+    ev = _eval(
+        'action(\n'
+        '  name="a",\n'
+        '  inputs=[],\n'
+        '  outputs=[],\n'
+        '  requirements=[\n'
+        '    memory_requirement(amount=8, unit="GiB"),\n'
+        '    disk_io_requirement(read_mbps=500, write_mbps=300),\n'
+        '    network_requirement(bandwidth_mbps=1000),\n'
+        '    cpu_requirement(count=4, type="x86_64"),\n'
+        '    gpu_requirement(count=1, type="nvidia-l4"),\n'
+        '  ],\n'
+        '  implementation=["//mlody/common:action_lib"]\n'
+        ')\n'
+    )
+    a = ev._actions_by_name["a"]
+    assert len(a.requirements) == 5
+    assert a.requirements[0].requirement == "memory"
+    assert a.requirements[3].requirement == "cpu"
+    assert a.requirements[3].type == "x86_64"
+    assert a.requirements[4].requirement == "gpu"
+    assert a.requirements[4].type == "nvidia-l4"
+
+
+# ---------------------------------------------------------------------------
+# TC-014: requirements rejects non-requirement elements
+# ---------------------------------------------------------------------------
+
+
+def test_action_requirements_rejects_non_requirement_structs() -> None:
+    with pytest.raises(TypeError, match="struct\\(kind='requirement'\\)"):
+        _eval(
+            'action(\n'
+            '  name="a",\n'
+            '  inputs=[],\n'
+            '  outputs=[],\n'
+            '  requirements=[integer()],\n'
+            '  implementation=["//mlody/common:action_lib"]\n'
+            ')\n'
+        )
+
+
+# ---------------------------------------------------------------------------
+# TC-015: cpu type defaults to "*" when omitted
+# ---------------------------------------------------------------------------
+
+
+def test_action_cpu_requirement_defaults_type_to_star() -> None:
+    ev = _eval(
+        'action(\n'
+        '  name="a",\n'
+        '  inputs=[],\n'
+        '  outputs=[],\n'
+        '  requirements=[cpu_requirement(count=2)],\n'
+        '  implementation=["//mlody/common:action_lib"]\n'
+        ')\n'
+    )
+    a = ev._actions_by_name["a"]
+    assert len(a.requirements) == 1
+    assert a.requirements[0].requirement == "cpu"
+    assert a.requirements[0].type == "*"
+
+
+def test_action_gpu_requirement_defaults_type_to_star() -> None:
+    ev = _eval(
+        'action(\n'
+        '  name="a",\n'
+        '  inputs=[],\n'
+        '  outputs=[],\n'
+        '  requirements=[gpu_requirement(count=1)],\n'
+        '  implementation=["//mlody/common:action_lib"]\n'
+        ')\n'
+    )
+    a = ev._actions_by_name["a"]
+    assert len(a.requirements) == 1
+    assert a.requirements[0].requirement == "gpu"
+    assert a.requirements[0].type == "*"

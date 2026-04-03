@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.syntax import Syntax
 
 from starlarkish.evaluator.evaluator import Evaluator
-from mlody.common.context import ctx as mlody_ctx
+from mlody.common.context import build_ctx
 from mlody.core.source_parser import extract_entity_ranges
 from mlody.core.targets import TargetAddress, parse_target, resolve_target_value
 
@@ -89,7 +89,7 @@ class Workspace:
         self._evaluator = Evaluator(
             root=monorepo_root,
             print_fn=print_fn,
-            extra_ctx=mlody_ctx,
+            extra_ctx=build_ctx(monorepo_root),
             line_range_extractor=extract_entity_ranges,
         )
         self._root_infos: dict[str, RootInfo] = {}
