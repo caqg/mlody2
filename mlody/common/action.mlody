@@ -12,6 +12,18 @@ def _validate_value_refs(attr_name, items):
     return list(items)
 
 
+def _validate_string_list(attr_name, items):
+    for item in items:
+        if not isinstance(item, str):
+            raise TypeError(
+                attr_name + ": expected a list of strings, got element of type "
+                + repr(type(item))
+            )
+    if len(items) == 0:
+        raise ValueError(attr_name + ": expected at least one target")
+    return list(items)
+
+
 def _action_impl(ctx):
     inputs_raw = python.getattr(ctx.attr, "inputs", [])
     if inputs_raw == None:
@@ -22,6 +34,7 @@ def _action_impl(ctx):
     if config_raw == None:
         config_raw = []
     config = _validate_value_refs("config", config_raw)
+    implementation = _validate_string_list("implementation", ctx.attr.implementation)
 
     action_struct = Struct(
         kind    = "action",
@@ -29,6 +42,7 @@ def _action_impl(ctx):
         inputs  = inputs,
         outputs = outputs,
         config  = config,
+        implementation = implementation,
     )
     builtins.register(ctx.kind, action_struct)
     return action_struct
@@ -42,5 +56,6 @@ action = rule(
         "inputs":  attr(type="value_ref_list", mandatory=False),
         "outputs": attr(type="value_ref_list"),
         "config":  attr(type="value_ref_list", mandatory=False),
+        "implementation": attr(type="string_list"),
     },
 )

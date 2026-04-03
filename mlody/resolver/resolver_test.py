@@ -61,6 +61,18 @@ class TestParseLabel:
         assert committoid == "abc1234"
         assert inner == "@lexica//models:bert"
 
+    def test_attribute_path_is_preserved_on_entity_label(self) -> None:
+        # Scenario: entity label with attribute path keeps dotted suffix in inner label.
+        committoid, inner = parse_label("@common//huggingface/downloader:downloader'outputs.model")
+        assert committoid is None
+        assert inner == "@common//huggingface/downloader:downloader.outputs.model"
+
+    def test_attribute_path_is_preserved_with_committoid(self) -> None:
+        # Scenario: committoid + entity attribute path preserves suffix.
+        committoid, inner = parse_label("main|@common//huggingface/downloader:downloader'outputs.model")
+        assert committoid == "main"
+        assert inner == "@common//huggingface/downloader:downloader.outputs.model"
+
     def test_missing_pipe_raises_label_parse_error(self) -> None:
         # Scenario: workspace-only label raises LabelParseError — no entity spec
         with pytest.raises(LabelParseError) as exc_info:

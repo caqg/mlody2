@@ -460,6 +460,7 @@ action(
     inputs  = [":raw_scores"],
     outputs = [":eval_scores"],
     config  = [":cfg_epochs", ":cfg_optimizer"],
+    implementation = ["dummy"],
 )
 train_action = builtins.lookup("action", "train_model")
 print("train_model.kind      =>", train_action.kind)        # "action"
@@ -471,13 +472,14 @@ action(
     name    = "export_checkpoints",
     inputs  = [":eval_scores"],
     outputs = [":checkpoints"],
+    implementation = ["dummy"],
 )
 export_action = builtins.lookup("action", "export_checkpoints")
 print("export_checkpoints.inputs[0]  =>", export_action.inputs[0])   # ":eval_scores" (pre-resolve)
 print("export_checkpoints.outputs[0] =>", export_action.outputs[0])  # ":checkpoints" (pre-resolve)
 
 # 3. No config — defaults to empty list.
-action(name="noop_action", inputs=[], outputs=[])
+action(name="noop_action", inputs=[], outputs=[], implementation=["dummy"])
 noop = builtins.lookup("action", "noop_action")
 print("noop_action.config =>", noop.config)  # []
 

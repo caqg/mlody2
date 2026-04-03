@@ -20,6 +20,7 @@ task(
         name="backbone_trainer",
         inputs=[],
         outputs=[value(name="backbone_weights", type=string(), location=s3())],
+        implementation=["dummy"],
     ),
 )
 
@@ -31,6 +32,7 @@ task(
         name="text_finetuner",
         inputs=[value(name="text_backbone", type=string(), location=s3())],
         outputs=[value(name="text_model", type=string(), location=s3())],
+        implementation=["dummy"],
     ),
 )
 
@@ -42,6 +44,7 @@ task(
         name="image_finetuner",
         inputs=[value(name="image_backbone", type=string(), location=s3())],
         outputs=[value(name="image_model", type=string(), location=s3())],
+        implementation=["dummy"],
     ),
 )
 
@@ -59,5 +62,6 @@ task(
             value(name="eval_image_in", type=string(), location=s3()),
         ],
         outputs=[],
+        implementation=["dummy"],
     ),
 )

@@ -184,6 +184,15 @@ class Workspace:
         - Entity-spec labels without name: @root//pkg, //pkg  → root struct
         - Workspace-level attribute labels: 'attr, 'attr.subfield
         """
+        def _step(obj: object, segment: str) -> object:
+            # Support list traversal by value name, e.g. outputs.model.
+            if isinstance(obj, list):
+                for item in obj:
+                    if getattr(item, "name", None) == segment:
+                        return item
+                raise KeyError(segment)
+            return getattr(obj, segment)
+
         if isinstance(target, str) and target.startswith("'"):
             # Workspace-attribute label: return a virtual value Struct whose
             # materializer forces the attribute access lazily.
@@ -207,7 +216,7 @@ class Workspace:
                     _logger.debug("workspace materializer invoked for label %r with value %r", target, _v)
                     obj: object = _ws_ref
                     for segment in attr_path:
-                        obj = getattr(obj, segment)
+                        obj = _step(obj, segment)
                     return obj
 
             virtual_loc = Struct(
@@ -238,6 +247,81 @@ class Workspace:
             except _LabelParseError:
                 pass  # fall through to parse_target for legacy error handling
             else:
+                if lbl.entity is not None and lbl.entity.name is not None:
+                    # Resolve direct entity labels (with optional dotted field path)
+                    # against evaluator registrations by (stem, name), where:
+                    #   stem = "<root_path>/<entity.path>" for @root labels
+                    #   stem = "<entity.path>" for // labels
+                    entity = lbl.entity
+                    name_parts = entity.name.split(".")
+                    base_name = name_parts[0]
+                    field_parts = tuple(name_parts[1:])
+                    if lbl.attribute_path:
+                        field_parts = field_parts + lbl.attribute_path
+
+                    stem_parts: list[str] = []
+                    can_registry_resolve = True
+                    if entity.root is not None:
+                        if entity.root in self._root_infos:
+                            root_rel = self._root_infos[entity.root].path.lstrip("/").rstrip("/")
+                            if root_rel:
+                                stem_parts.append(root_rel)
+                        elif entity.root in self._evaluator._roots_by_name:
+                            # Dynamic/runtime roots (e.g. @bert in tests) do not have
+                            # RootInfo metadata; defer to legacy parse_target path.
+                            can_registry_resolve = False
+                        else:
+                            available = sorted(self._evaluator._roots_by_name)
+                            msg = f"Root {entity.root!r} not found; available roots: {available}"
+                            raise KeyError(msg)
+                    if entity.path:
+                        stem_parts.append(entity.path.lstrip("/").rstrip("/"))
+                    stem = "/".join([p for p in stem_parts if p])
+                    path_suffix = entity.path.lstrip("/").rstrip("/") if entity.path else ""
+                    root_prefix = None
+                    if entity.root is not None and entity.root in self._root_infos:
+                        root_prefix = self._root_infos[entity.root].path.lstrip("/").rstrip("/")
+
+                    matches: list[tuple[str, object]] = []
+                    if can_registry_resolve:
+                        for key, value in self._evaluator.all.items():
+                            if (
+                                isinstance(key, tuple)
+                                and len(key) == 3
+                                and key[1] == stem
+                                and key[2] == base_name
+                            ):
+                                matches.append((key[0], value))
+
+                    if can_registry_resolve and not matches:
+                        # Fallback: match by entity name plus path suffix/root prefix.
+                        for key, value in self._evaluator.all.items():
+                            if not (isinstance(key, tuple) and len(key) == 3 and key[2] == base_name):
+                                continue
+                            key_stem = key[1]
+                            if not isinstance(key_stem, str):
+                                continue
+                            if root_prefix and not key_stem.startswith(root_prefix):
+                                continue
+                            if path_suffix and not key_stem.endswith(path_suffix):
+                                continue
+                            matches.append((key[0], value))
+
+                    if matches:
+                        kind_order = {
+                            "task": 0,
+                            "action": 1,
+                            "value": 2,
+                            "type": 3,
+                            "location": 4,
+                            "root": 5,
+                        }
+                        matches.sort(key=lambda kv: kind_order.get(kv[0], 99))
+                        obj = matches[0][1]
+                        for field in field_parts:
+                            obj = _step(obj, field)
+                        return obj
+
                 if lbl.entity is not None and lbl.entity.name is None:
                     # No specific entity name: return the root struct so the
                     # caller can inspect all entities registered on that root.
@@ -264,7 +348,7 @@ class Workspace:
                         raise KeyError(f"Entity {name_parts[0]!r} not found in {file_path}")
                     obj = module_globals[name_parts[0]]
                     for field in name_parts[1:]:
-                        obj = getattr(obj, field)
+                        obj = _step(obj, field)
                     return obj
 
         address = parse_target(target) if isinstance(target, str) else target

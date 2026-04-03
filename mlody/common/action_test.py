@@ -54,7 +54,7 @@ def test_action_registers_with_kind_action() -> None:
     ev = _eval(
         'value(name="inp", type=integer(), location=s3())\n'
         'value(name="out", type=integer(), location=s3())\n'
-        'action(name="my_action", inputs=["inp"], outputs=["out"])\n'
+        'action(name="my_action", inputs=["inp"], outputs=["out"], implementation=["//mlody/common:action_lib"])\n'
     )
     assert "my_action" in ev._actions_by_name
     a = ev._actions_by_name["my_action"]
@@ -71,7 +71,7 @@ def test_action_stores_inputs_and_outputs() -> None:
     ev = _eval(
         'value(name="inp", type=integer(), location=s3())\n'
         'value(name="out", type=string(), location=s3())\n'
-        'action(name="a", inputs=["inp"], outputs=["out"])\n'
+        'action(name="a", inputs=["inp"], outputs=["out"], implementation=["//mlody/common:action_lib"])\n'
     )
     a = ev._actions_by_name["a"]
     assert a.inputs[0].name == "inp"
@@ -86,7 +86,7 @@ def test_action_stores_inputs_and_outputs() -> None:
 def test_action_string_value_label_resolves() -> None:
     ev = _eval(
         'value(name="my_val", type=integer(), location=s3())\n'
-        'action(name="a", inputs=["my_val"], outputs=[])\n'
+        'action(name="a", inputs=["my_val"], outputs=[], implementation=["//mlody/common:action_lib"])\n'
     )
     a = ev._actions_by_name["a"]
     assert a.inputs[0].name == "my_val"
@@ -99,21 +99,20 @@ def test_action_string_value_label_resolves() -> None:
 
 
 def test_action_empty_inputs_and_outputs_allowed() -> None:
-    ev = _eval('action(name="empty", inputs=[], outputs=[])\n')
+    ev = _eval('action(name="empty", inputs=[], outputs=[], implementation=["//mlody/common:action_lib"])\n')
     a = ev._actions_by_name["empty"]
     assert a.inputs == []
     assert a.outputs == []
 
 
 # ---------------------------------------------------------------------------
-# TC-005: config defaults to empty list when omitted
+# TC-005: implementation is mandatory
 # ---------------------------------------------------------------------------
 
 
-def test_action_config_defaults_to_empty_list() -> None:
-    ev = _eval('action(name="a", inputs=[], outputs=[])\n')
-    a = ev._actions_by_name["a"]
-    assert a.config == []
+def test_action_implementation_is_mandatory() -> None:
+    with pytest.raises(ValueError, match="Missing mandatory argument"):
+        _eval('action(name="a", inputs=[], outputs=[])\n')
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +123,7 @@ def test_action_config_defaults_to_empty_list() -> None:
 def test_action_config_value_refs_stored() -> None:
     ev = _eval(
         'value(name="cfg", type=integer(), location=s3())\n'
-        'action(name="a", inputs=[], outputs=[], config=["cfg"])\n'
+        'action(name="a", inputs=[], outputs=[], config=["cfg"], implementation=["//mlody/common:action_lib"])\n'
     )
     a = ev._actions_by_name["a"]
     assert len(a.config) == 1
@@ -138,7 +137,7 @@ def test_action_config_value_refs_stored() -> None:
 
 def test_action_unknown_value_label_raises_name_error() -> None:
     with pytest.raises(NameError):
-        _eval('action(name="a", inputs=["nonexistent"], outputs=[])\n')
+        _eval('action(name="a", inputs=["nonexistent"], outputs=[], implementation=["//mlody/common:action_lib"])\n')
 
 
 # ---------------------------------------------------------------------------
@@ -148,4 +147,45 @@ def test_action_unknown_value_label_raises_name_error() -> None:
 
 def test_action_wrong_type_in_inputs_raises_type_error() -> None:
     with pytest.raises(TypeError):
-        _eval('action(name="a", inputs=[integer()], outputs=[])\n')
+        _eval('action(name="a", inputs=[integer()], outputs=[], implementation=["//mlody/common:action_lib"])\n')
+
+
+# ---------------------------------------------------------------------------
+# TC-009: implementation rejects empty target list
+# ---------------------------------------------------------------------------
+
+
+def test_action_implementation_rejects_empty_list() -> None:
+    with pytest.raises(ValueError, match="at least one target"):
+        _eval('action(name="a", inputs=[], outputs=[], implementation=[])\n')
+
+
+# ---------------------------------------------------------------------------
+# TC-010: implementation stores bazel target strings
+# ---------------------------------------------------------------------------
+
+
+def test_action_implementation_stores_bazel_targets() -> None:
+    ev = _eval(
+        'action(\n'
+        '  name="a",\n'
+        '  inputs=[],\n'
+        '  outputs=[],\n'
+        '  implementation=["//mlody/common/huggingface:model-download", "//mlody/cli:main"]\n'
+        ')\n'
+    )
+    a = ev._actions_by_name["a"]
+    assert a.implementation == [
+        "//mlody/common/huggingface:model-download",
+        "//mlody/cli:main",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# TC-011: implementation rejects non-string entries
+# ---------------------------------------------------------------------------
+
+
+def test_action_implementation_non_string_raises_type_error() -> None:
+    with pytest.raises(TypeError):
+        _eval('action(name="a", inputs=[], outputs=[], implementation=[1])\n')

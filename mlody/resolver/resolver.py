@@ -132,6 +132,8 @@ def parse_label(label: str) -> tuple[str | None, str]:
         parts.append(f"//{path}")
     if lbl.entity.name is not None:
         parts.append(f":{lbl.entity.name}")
+    if lbl.attribute_path:
+        parts.append("." + ".".join(lbl.attribute_path))
     inner_label = "".join(parts)
     return (committoid, inner_label)
 
