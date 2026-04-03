@@ -21,6 +21,49 @@ _logger = logging.getLogger(__name__)
 _console = Console()
 
 
+def _short_type_name(value: object) -> str:
+    """Return a concise type label for a value-like object."""
+    t = getattr(value, "type", None)
+    if t is None:
+        return "?"
+    # value.type is normally a type struct with a .name field
+    t_name = getattr(t, "name", None)
+    if isinstance(t_name, str) and t_name:
+        return t_name
+    if isinstance(t, str) and t:
+        return t
+    return "?"
+
+
+def _format_value_list(values: object) -> str:
+    """Format ports/config entries as `name:type` with short type names."""
+    if not isinstance(values, list) or not values:
+        return "—"
+
+    rendered: list[str] = []
+    for v in values:
+        name = getattr(v, "name", None)
+        if not isinstance(name, str) or not name:
+            name = str(v)
+        rendered.append(f"{name}:{_short_type_name(v)}")
+    return ", ".join(rendered)
+
+
+def _format_action_cell(action_obj: object, fallback_name: str) -> str:
+    """Format action name plus AIn/AOut/ACfg summaries."""
+    if action_obj is None:
+        return fallback_name
+
+    name = getattr(action_obj, "name", None)
+    if not isinstance(name, str) or not name:
+        name = fallback_name
+
+    a_inputs = _format_value_list(getattr(action_obj, "inputs", []))
+    a_outputs = _format_value_list(getattr(action_obj, "outputs", []))
+    a_config = _format_value_list(getattr(action_obj, "config", []))
+    return f"{name}\nAIn:  {a_inputs}\nAOut: {a_outputs}\nACfg: {a_config}"
+
+
 def _subgraph_for_label(
     dag: networkx.MultiDiGraph, label: str
 ) -> tuple[networkx.MultiDiGraph, str]:
@@ -192,21 +235,23 @@ def dag_cmd(ctx: click.Context, label: str | None, gui: bool) -> None:
 
     table = Table(title=title, show_lines=True, expand=True)
     table.add_column("Task", style="cyan", no_wrap=True, ratio=4)
-    table.add_column("Action", style="magenta", no_wrap=True, ratio=2)
+    table.add_column("Action", style="magenta", no_wrap=False, ratio=2)
     table.add_column("Dependencies", style="white", ratio=5)
 
     for node_id in order:
         task_node = display_graph.nodes[node_id]["task"]
+        task_struct = display_graph.nodes[node_id]["task_struct"]
         deps: list[str] = []
         for src_id, _, data in display_graph.in_edges(node_id, data=True):
             edge: Edge = data["edge"]
             deps.append(f"{src_id}\n  {edge.src_port} → {edge.dst_path}")
-        inputs_str = ", ".join(task_node.input_ports) if task_node.input_ports else "—"
-        outputs_str = ", ".join(task_node.output_ports) if task_node.output_ports else "—"
-        task_cell = f"{node_id}\nIn:  {inputs_str}\nOut: {outputs_str}"
+        inputs_str = _format_value_list(getattr(task_struct, "inputs", []))
+        outputs_str = _format_value_list(getattr(task_struct, "outputs", []))
+        config_str = _format_value_list(getattr(task_struct, "config", []))
+        task_cell = f"{node_id}\nIn:  {inputs_str}\nOut: {outputs_str}\nCfg: {config_str}"
         table.add_row(
             task_cell,
-            task_node.action,
+            _format_action_cell(getattr(task_struct, "action", None), task_node.action),
             "\n\n".join(deps) if deps else "—",
         )
 

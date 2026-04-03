@@ -29,11 +29,21 @@ from mlody.cli.main import cli
 
 def _make_port(name: str, source: str = "") -> SimpleNamespace:
     """Construct a minimal port/value namespace matching the task struct field shape."""
-    return SimpleNamespace(name=name, source=source)
+    return SimpleNamespace(name=name, source=source, type=SimpleNamespace(name="integer"))
 
 
-def _make_action(name: str) -> SimpleNamespace:
-    return SimpleNamespace(name=name)
+def _make_action(
+    name: str,
+    inputs: list[str] | None = None,
+    outputs: list[str] | None = None,
+    config: list[str] | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        name=name,
+        inputs=[_make_port(p) for p in (inputs or [])],
+        outputs=[_make_port(p) for p in (outputs or [])],
+        config=[_make_port(p) for p in (config or [])],
+    )
 
 
 def _make_task_struct(
@@ -41,14 +51,24 @@ def _make_task_struct(
     action_name: str,
     outputs: list[str] | None = None,
     inputs: list[str] | None = None,
+    config: list[str] | None = None,
+    action_outputs: list[str] | None = None,
+    action_inputs: list[str] | None = None,
+    action_config: list[str] | None = None,
 ) -> SimpleNamespace:
     """Build a minimal task struct that build_dag can read."""
     return SimpleNamespace(
         kind="task",
         name=name,
-        action=_make_action(action_name),
+        action=_make_action(
+            action_name,
+            inputs=action_inputs,
+            outputs=action_outputs,
+            config=action_config,
+        ),
         outputs=[_make_port(p) for p in (outputs or [])],
         inputs=[_make_port(p) for p in (inputs or [])],
+        config=[_make_port(p) for p in (config or [])],
     )
 
 
@@ -201,6 +221,54 @@ class TestDagFullGraph:
 
         assert result.exit_code == 0  # type: ignore[union-attr]
         assert "Workspace DAG" in result.output  # type: ignore[union-attr]
+
+    def test_table_shows_cfg_and_short_types(self, tmp_path: Path) -> None:
+        """Task cell includes In/Out/Cfg with short `name:type` rendering."""
+        tasks: dict[str, SimpleNamespace] = {
+            "test:trainer": _make_task_struct(
+                "trainer",
+                "train_action",
+                inputs=["dataset"],
+                outputs=["model"],
+                config=["epochs"],
+            ),
+        }
+        result = _invoke_dag(tmp_path, [], tasks)
+
+        assert result.exit_code == 0  # type: ignore[union-attr]
+        output: str = result.output  # type: ignore[union-attr]
+        assert "In:  dataset:integer" in output
+        assert "Out: model:integer" in output
+        assert "Cfg: epochs:integer" in output
+
+    def test_table_shows_action_ports_and_config_with_short_types(
+        self, tmp_path: Path
+    ) -> None:
+        """Action cell includes AIn/AOut/ACfg with short `name:type` rendering."""
+        tasks: dict[str, SimpleNamespace] = {
+            "test:trainer": _make_task_struct(
+                "trainer",
+                "train_action",
+                inputs=["dataset"],
+                outputs=["model"],
+                config=["epochs"],
+                action_inputs=["raw_input"],
+                action_outputs=["trained_model"],
+                action_config=["learning_rate"],
+            ),
+        }
+        result = _invoke_dag(tmp_path, [], tasks)
+
+        assert result.exit_code == 0  # type: ignore[union-attr]
+        output: str = result.output  # type: ignore[union-attr]
+        # Rich may wrap/truncate cells depending on terminal width, so assert
+        # semantic fragments instead of one exact line.
+        assert "AIn:" in output
+        assert "raw_input" in output
+        assert "AOut:" in output
+        assert "trained_mod" in output
+        assert "ACfg:" in output
+        assert "learning_ra" in output
 
 
 # ---------------------------------------------------------------------------
