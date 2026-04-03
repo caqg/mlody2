@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import networkx
 import pytest
 from click.testing import CliRunner
 from starlarkish.core.struct import struct
@@ -267,6 +268,60 @@ class TestShowCommandOutput:
         lr_pos = result.output.index("0.001")
         opt_pos = result.output.index("adam")
         assert lr_pos < opt_pos
+
+
+class TestShowCommandDagPlan:
+    """Requirement: output labels render the same DAG table used by dag."""
+
+    def test_output_label_renders_pruned_dag_table(self) -> None:
+        ws = MagicMock()
+        ws.resolve.return_value = "model-value"
+        ws.root_infos = {}
+
+        dag = networkx.MultiDiGraph()
+        dag.add_node("task/common/downloader:download")
+
+        runner = CliRunner()
+        with (
+            patch("mlody.cli.show.build_dag", return_value=dag),
+            patch("mlody.cli.show._subgraph_for_show_output_label", return_value=dag),
+            patch("mlody.cli.show._render_dag_table") as mock_render,
+        ):
+            result = runner.invoke(
+                cli,
+                ["show", "@common//huggingface/downloader:downloader.outputs.model"],
+                obj={"workspace": ws, "verbose": False},
+            )
+
+        assert result.exit_code == 0
+        mock_render.assert_called_once_with(
+            dag, "DAG — ancestors of '@common//huggingface/downloader:downloader.outputs.model'"
+        )
+        ws.resolve.assert_called_once_with(
+            "@common//huggingface/downloader:downloader.outputs.model"
+        )
+
+    def test_non_output_label_skips_dag_table_render(self) -> None:
+        ws = MagicMock()
+        ws.resolve.return_value = "ok"
+        ws.root_infos = {}
+
+        dag = networkx.MultiDiGraph()
+
+        runner = CliRunner()
+        with (
+            patch("mlody.cli.show.build_dag", return_value=dag),
+            patch("mlody.cli.show._subgraph_for_show_output_label", return_value=None),
+            patch("mlody.cli.show._render_dag_table") as mock_render,
+        ):
+            result = runner.invoke(
+                cli,
+                ["show", "@common//huggingface/downloader:downloader"],
+                obj={"workspace": ws, "verbose": False},
+            )
+
+        assert result.exit_code == 0
+        mock_render.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

@@ -13,9 +13,14 @@ from pathlib import Path
 from typing import Callable
 
 import click
+import networkx
+from rich.console import Console
 from rich.pretty import pretty_repr
+from rich.table import Table
 
 from mlody.cli.main import cli
+from mlody.core.dag import Edge, TaskNode, ancestors_subgraph, build_dag
+from mlody.core.targets import parse_target
 from mlody.core.workspace import Workspace, WorkspaceLoadError, force
 from mlody.db.evaluations import open_db, write_evaluation
 from mlody.db.local_diff import compute_local_diff_sha, get_repo_root
@@ -27,6 +32,7 @@ _logger = logging.getLogger(__name__)
 _DEFAULT_CACHE_SUFFIX = Path(".cache") / "mlody"
 _DEFAULT_DB_NAME = "mlody.sqlite"
 _DEFAULT_WORKSPACES_SUFFIX = _DEFAULT_CACHE_SUFFIX / "workspaces"
+_console = Console()
 
 
 def _get_username() -> str:
@@ -133,6 +139,97 @@ def _format_value(value: object) -> str:
     return pretty_repr(value)
 
 
+def _short_type_name(value: object) -> str:
+    t = getattr(value, "type", None)
+    if t is None:
+        return "?"
+    t_name = getattr(t, "name", None)
+    if isinstance(t_name, str) and t_name:
+        return t_name
+    if isinstance(t, str) and t:
+        return t
+    return "?"
+
+
+def _format_value_list(values: object) -> str:
+    if not isinstance(values, list) or not values:
+        return "—"
+    rendered: list[str] = []
+    for v in values:
+        name = getattr(v, "name", None)
+        if not isinstance(name, str) or not name:
+            name = str(v)
+        rendered.append(f"{name}:{_short_type_name(v)}")
+    return ", ".join(rendered)
+
+
+def _format_action_cell(action_obj: object, fallback_name: str) -> str:
+    if action_obj is None:
+        return fallback_name
+    name = getattr(action_obj, "name", None)
+    if not isinstance(name, str) or not name:
+        name = fallback_name
+    a_inputs = _format_value_list(getattr(action_obj, "inputs", []))
+    a_outputs = _format_value_list(getattr(action_obj, "outputs", []))
+    a_config = _format_value_list(getattr(action_obj, "config", []))
+    return f"{name}\nAIn:  {a_inputs}\nAOut: {a_outputs}\nACfg: {a_config}"
+
+
+def _render_dag_table(display_graph: networkx.MultiDiGraph, title: str) -> None:
+    try:
+        order = list(networkx.topological_sort(display_graph))
+    except networkx.NetworkXUnfeasible:
+        click.echo(click.style("Error: cycle detected in task graph", fg="red"), err=True)
+        return
+
+    table = Table(title=title, show_lines=True, expand=True)
+    table.add_column("Task", style="cyan", no_wrap=True, ratio=4)
+    table.add_column("Action", style="magenta", no_wrap=False, ratio=2)
+    table.add_column("Dependencies", style="white", ratio=5)
+
+    for node_id in order:
+        task_node = display_graph.nodes[node_id]["task"]
+        task_struct = display_graph.nodes[node_id]["task_struct"]
+        deps: list[str] = []
+        for src_id, _, data in display_graph.in_edges(node_id, data=True):
+            edge: Edge = data["edge"]
+            deps.append(f"{src_id}\n  {edge.src_port} → {edge.dst_path}")
+        inputs_str = _format_value_list(getattr(task_struct, "inputs", []))
+        outputs_str = _format_value_list(getattr(task_struct, "outputs", []))
+        config_str = _format_value_list(getattr(task_struct, "config", []))
+        task_cell = f"{node_id}\nIn:  {inputs_str}\nOut: {outputs_str}\nCfg: {config_str}"
+        table.add_row(
+            task_cell,
+            _format_action_cell(getattr(task_struct, "action", None), task_node.action),
+            "\n\n".join(deps) if deps else "—",
+        )
+
+    _console.print(table)
+
+
+def _subgraph_for_show_output_label(
+    dag: networkx.MultiDiGraph, label: str
+) -> networkx.MultiDiGraph | None:
+    try:
+        addr = parse_target(label)
+    except ValueError:
+        return None
+    if len(addr.field_path) == 2 and addr.field_path[0] == "outputs":
+        return ancestors_subgraph(dag, addr.field_path[1])
+    return None
+
+
+def _maybe_print_dag_plan(workspace: Workspace, label: str) -> None:
+    try:
+        dag = build_dag(workspace)
+        subgraph = _subgraph_for_show_output_label(dag, label)
+        if subgraph is None or len(subgraph.nodes) == 0:
+            return
+        _render_dag_table(subgraph, f"DAG — ancestors of '{label}'")
+    except Exception as exc:
+        _logger.debug("Skipping DAG plan rendering for %r: %s", label, exc)
+
+
 @cli.command()
 @click.argument("targets", nargs=-1, required=True)
 @click.pass_context
@@ -165,18 +262,8 @@ def show(ctx: click.Context, targets: tuple[str, ...]) -> None:
             if resolved_sha is not None:
                 _logger.debug("Resolved %s to %s", target.split("|")[0], resolved_sha)
 
-            print("====")
-            for k in workspace.evaluator.all.keys():
-                print(f"> {k}")
-            print(_parse_label_struct(target))
-            print("--")
-            click.echo(pretty_repr(_parse_label_struct(target)))
-            print(".")
-            click.echo(
-                pretty_repr(workspace.evaluator.all[("root", "mlody/roots", "lexica")])
-            )
-            print("====")
             _committoid, inner_label = _parse_inner(target)
+            _maybe_print_dag_plan(workspace, inner_label)
             value = force(workspace.resolve(inner_label))
 
             if resolved_sha is not None:
@@ -239,6 +326,7 @@ def _show_with_legacy_workspace(ctx: click.Context, targets: tuple[str, ...]) ->
 
     for target in targets:
         try:
+            _maybe_print_dag_plan(workspace, target)
             value = force(workspace.resolve(target))
         except KeyError as exc:
             has_error = True
