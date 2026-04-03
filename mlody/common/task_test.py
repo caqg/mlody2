@@ -55,7 +55,7 @@ def _eval(extra_mlody: str) -> Evaluator:
 
 def test_task_registers_with_kind_task() -> None:
     ev = _eval(
-        'action(name="my_action", inputs=[], outputs=[])\n'
+        'action(name="my_action", inputs=[], outputs=[], implementation=["dummy"])\n'
         'task(name="my_task", inputs=[], outputs=[], action="my_action")\n'
     )
     assert "my_task" in ev._tasks_by_name
@@ -71,7 +71,7 @@ def test_task_registers_with_kind_task() -> None:
 
 def test_task_action_string_label_resolves() -> None:
     ev = _eval(
-        'action(name="my_action", inputs=[], outputs=[])\n'
+        'action(name="my_action", inputs=[], outputs=[], implementation=["dummy"])\n'
         'task(name="t", inputs=[], outputs=[], action="my_action")\n'
     )
     t = ev._tasks_by_name["t"]
@@ -88,7 +88,7 @@ def test_task_stores_action_inputs_outputs() -> None:
     ev = _eval(
         'value(name="inp", type=integer(), location=s3())\n'
         'value(name="out", type=string(), location=s3())\n'
-        'action(name="act", inputs=[], outputs=[])\n'
+        'action(name="act", inputs=[], outputs=[], implementation=["dummy"])\n'
         'task(name="t", inputs=["inp"], outputs=["out"], action="act")\n'
     )
     t = ev._tasks_by_name["t"]
@@ -104,7 +104,7 @@ def test_task_stores_action_inputs_outputs() -> None:
 
 def test_task_config_defaults_to_empty_list() -> None:
     ev = _eval(
-        'action(name="act", inputs=[], outputs=[])\n'
+        'action(name="act", inputs=[], outputs=[], implementation=["dummy"])\n'
         'task(name="t", inputs=[], outputs=[], action="act")\n'
     )
     t = ev._tasks_by_name["t"]
@@ -119,7 +119,7 @@ def test_task_config_defaults_to_empty_list() -> None:
 def test_task_config_value_refs_stored() -> None:
     ev = _eval(
         'value(name="cfg", type=integer(), location=s3())\n'
-        'action(name="act", inputs=[], outputs=[])\n'
+        'action(name="act", inputs=[], outputs=[], implementation=["dummy"])\n'
         'task(name="t", inputs=[], outputs=[], action="act", config=["cfg"])\n'
     )
     t = ev._tasks_by_name["t"]
@@ -155,7 +155,7 @@ def test_task_wrong_action_type_raises_type_error() -> None:
 def test_task_string_value_labels_in_inputs_resolve() -> None:
     ev = _eval(
         'value(name="inp", type=integer(), location=s3())\n'
-        'action(name="act", inputs=[], outputs=[])\n'
+        'action(name="act", inputs=[], outputs=[], implementation=["dummy"])\n'
         'task(name="t", inputs=["inp"], outputs=[], action="act")\n'
     )
     t = ev._tasks_by_name["t"]
@@ -170,7 +170,7 @@ def test_task_string_value_labels_in_inputs_resolve() -> None:
 
 def test_task_empty_inputs_outputs_allowed() -> None:
     ev = _eval(
-        'action(name="act", inputs=[], outputs=[])\n'
+        'action(name="act", inputs=[], outputs=[], implementation=["dummy"])\n'
         'task(name="t", inputs=[], outputs=[], action="act")\n'
     )
     t = ev._tasks_by_name["t"]
@@ -188,7 +188,7 @@ def test_forward_reference() -> None:
     ev = _eval(
         'value(name="x", type=integer(), location=s3())\n'
         'task(name="t", inputs=[":x"], outputs=[], action=":a")\n'
-        'action(name="a", inputs=[":x"], outputs=[])\n'
+        'action(name="a", inputs=[":x"], outputs=[], implementation=["dummy"])\n'
     )
     t = ev._tasks_by_name["t"]
     a = ev._actions_by_name["a"]
@@ -210,7 +210,8 @@ def test_task_action_input_value_fields_are_unified_both_ways() -> None:
         '  action=action(\n'
         '    name="act",\n'
         '    inputs=[struct(kind="value", name="inp", type=integer())],\n'
-        '    outputs=[]\n'
+        '    outputs=[],\n'
+        '    implementation=["dummy"]\n'
         '  )\n'
         ')\n'
     )
@@ -236,7 +237,8 @@ def test_task_action_output_value_fields_are_unified_both_ways() -> None:
         '  action=action(\n'
         '    name="act",\n'
         '    inputs=[],\n'
-        '    outputs=[struct(kind="value", name="out", location=s3())]\n'
+        '    outputs=[struct(kind="value", name="out", location=s3())],\n'
+        '    implementation=["dummy"]\n'
         '  )\n'
         ')\n'
     )
@@ -262,7 +264,8 @@ def test_task_value_missing_required_fields_on_both_sides_raises_value_error() -
             '  action=action(\n'
             '    name="act",\n'
             '    inputs=[struct(kind="value", name="inp")],\n'
-            '    outputs=[]\n'
+            '    outputs=[],\n'
+            '    implementation=["dummy"]\n'
             '  )\n'
             ')\n'
         )
@@ -278,7 +281,8 @@ def test_task_action_string_ref_value_fields_are_unified() -> None:
         'action(\n'
         '  name="act",\n'
         '  inputs=[struct(kind="value", name="inp", type=integer())],\n'
-        '  outputs=[]\n'
+        '  outputs=[],\n'
+        '  implementation=["dummy"]\n'
         ')\n'
         'task(name="t", inputs=[struct(kind="value", name="inp", location=s3())], outputs=[], action="act")\n'
     )
@@ -301,7 +305,8 @@ def test_task_action_equal_location_specs_do_not_conflict() -> None:
         '  action=action(\n'
         '    name="act",\n'
         '    inputs=[],\n'
-        '    outputs=[value(name="model", type=string(), location=posix(path="/tmp/model"))]\n'
+        '    outputs=[value(name="model", type=string(), location=posix(path="/tmp/model"))],\n'
+        '    implementation=["dummy"]\n'
         '  )\n'
         ')\n'
     )
