@@ -198,3 +198,38 @@ def test_value_allows_missing_type() -> None:
     v = ev._values_by_name["v"]
     assert v.type is None
     assert v.location.kind == "location"
+
+
+# ---------------------------------------------------------------------------
+# TC-012: value() accepts optional default of any Starlark builtin type
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("expr", "expected"),
+    [
+        ("1", 1),
+        ("3.14", 3.14),
+        ('"hello"', "hello"),
+        ("True", True),
+        ("[1, 2, 3]", [1, 2, 3]),
+    ],
+)
+def test_value_stores_default_builtin_types(expr: str, expected: object) -> None:
+    ev = _eval(f'value(name="v", type=integer(), location=s3(), default={expr})')
+    v = ev._values_by_name["v"]
+    assert v.default == expected
+
+
+def test_value_stores_dict_literal_default() -> None:
+    ev = _eval('value(name="v", type=integer(), location=s3(), default={"k": "v"})')
+    v = ev._values_by_name["v"]
+    # In starlarkish, dict literals are represented as Struct values.
+    assert getattr(v.default, "k", None) == "v"
+
+
+def test_value_stores_tuple_literal_default() -> None:
+    ev = _eval('value(name="v", type=integer(), location=s3(), default=(1, 2))')
+    v = ev._values_by_name["v"]
+    # Tuples are normalized to list in runtime values.
+    assert v.default == [1, 2]
