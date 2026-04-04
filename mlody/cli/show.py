@@ -268,25 +268,35 @@ def show(ctx: click.Context, targets: tuple[str, ...]) -> None:
                 _logger.debug("Resolved %s to %s", target.split("|")[0], resolved_sha)
 
             _committoid, inner_label = _parse_inner(target)
-            click.echo(json.dumps(dataclasses.asdict(_parse_label_struct(target)), indent=2))
-            _maybe_print_dag_plan(workspace, inner_label)
-            value = force(workspace.resolve(inner_label))
-
-            if resolved_sha is not None:
-                # Only record evaluations for committoid-qualified labels
-                # (cwd-relative labels have no resolved_sha).
-                cache_root = Path.home() / _DEFAULT_WORKSPACES_SUFFIX
-                meta = _read_meta(cache_root, resolved_sha)
-                _record_evaluation(
-                    resolved_sha=resolved_sha,
-                    requested_ref=str(meta.get("requested_ref", _committoid or target)),
-                    local_only=bool(meta.get("local_only", False)),
-                    repo=meta.get("repo") if isinstance(meta.get("repo"), str) else "",  # type: ignore[arg-type]
-                    resolved_at=str(
-                        meta.get("resolved_at", datetime.now(timezone.utc).isoformat())
-                    ),
-                    value_description=pretty_repr(value),
+            for expanded_inner in workspace.expand_wildcard_label(inner_label):
+                full_label = (
+                    f"{_committoid}|{expanded_inner}" if _committoid else expanded_inner
                 )
+                click.echo(
+                    json.dumps(dataclasses.asdict(_parse_label_struct(full_label)), indent=2)
+                )
+                _maybe_print_dag_plan(workspace, expanded_inner)
+                value = force(workspace.resolve(expanded_inner))
+
+                if resolved_sha is not None:
+                    # Only record evaluations for committoid-qualified labels
+                    # (cwd-relative labels have no resolved_sha).
+                    cache_root = Path.home() / _DEFAULT_WORKSPACES_SUFFIX
+                    meta = _read_meta(cache_root, resolved_sha)
+                    _record_evaluation(
+                        resolved_sha=resolved_sha,
+                        requested_ref=str(meta.get("requested_ref", _committoid or target)),
+                        local_only=bool(meta.get("local_only", False)),
+                        repo=meta.get("repo") if isinstance(meta.get("repo"), str) else "",  # type: ignore[arg-type]
+                        resolved_at=str(
+                            meta.get("resolved_at", datetime.now(timezone.utc).isoformat())
+                        ),
+                        value_description=pretty_repr(value),
+                    )
+
+                print("-------------------------------")
+                click.echo(_format_value(value))
+                print("-------------------------------")
         except WorkspaceLoadError as exc:
             has_error = True
             click.echo(click.style(f"Error: {exc}", fg="red"), err=True)
@@ -303,10 +313,6 @@ def show(ctx: click.Context, targets: tuple[str, ...]) -> None:
             has_error = True
             click.echo(click.style(f"Error: {exc}", fg="red"), err=True)
             continue
-
-        print("-------------------------------")
-        click.echo(_format_value(value))
-        print("-------------------------------")
 
     if has_error:
         sys.exit(1)

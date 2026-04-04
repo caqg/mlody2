@@ -415,3 +415,66 @@ class Workspace:
 
         address = parse_target(target) if isinstance(target, str) else target
         return resolve_target_value(address, self._evaluator._roots_by_name)
+
+    def expand_wildcard_label(self, inner_label: str) -> list[str]:
+        """Expand a wildcard inner label into concrete labels (wildcard=False).
+
+        Scans the loaded evaluator registry for all stems matching the wildcard
+        pattern and returns one concrete label string per matching stem.
+
+        If the label is not a wildcard, returns ``[inner_label]`` unchanged.
+        """
+        from mlody.core.label import parse_label as _core_parse_label
+        from mlody.core.label.errors import LabelParseError
+
+        try:
+            lbl = _core_parse_label(inner_label)
+        except LabelParseError:
+            return [inner_label]
+
+        if lbl.entity is None or not lbl.entity.wildcard:
+            return [inner_label]
+
+        entity = lbl.entity
+        base_name = entity.name.split(".")[0] if entity.name else None
+
+        root_prefix: str | None = None
+        if entity.root is not None and entity.root in self._root_infos:
+            root_prefix = self._root_infos[entity.root].path.lstrip("/").rstrip("/")
+
+        path_suffix = entity.path.lstrip("/").rstrip("/") if entity.path else ""
+
+        stems: set[str] = set()
+        for key in self._evaluator.all:
+            if not (isinstance(key, tuple) and len(key) == 3):
+                continue
+            k_stem, k_name = key[1], key[2]
+            if not isinstance(k_stem, str):
+                continue
+            if base_name is not None and k_name != base_name:
+                continue
+            if root_prefix is not None and not k_stem.startswith(root_prefix):
+                continue
+            if path_suffix and not k_stem.endswith(path_suffix):
+                continue
+            stems.add(k_stem)
+
+        result: list[str] = []
+        for stem in sorted(stems):
+            if root_prefix and stem.startswith(root_prefix):
+                rel_path = stem[len(root_prefix):].lstrip("/")
+            else:
+                rel_path = stem
+
+            parts: list[str] = []
+            if entity.root:
+                parts.append(f"@{entity.root}//{rel_path}")
+            else:
+                parts.append(f"//{rel_path}")
+            if entity.name:
+                parts.append(f":{entity.name}")
+            if lbl.attribute_path:
+                parts.append(f"'{'.' .join(lbl.attribute_path)}")
+            result.append("".join(parts))
+
+        return result
