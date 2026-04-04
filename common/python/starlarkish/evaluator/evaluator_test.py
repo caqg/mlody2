@@ -9,6 +9,7 @@ from pyfakefs.fake_filesystem import FakeFilesystem
 from starlarkish.evaluator import evaluator as evaluator_module
 from starlarkish.evaluator.evaluator import Evaluator
 from starlarkish.evaluator.testing import InMemoryFS
+from starlarkish.core.struct import Struct
 
 
 @pytest.fixture
@@ -528,6 +529,30 @@ def test_lookup_returns_registered_type(fs: FakeFilesystem) -> None:
     ev = Evaluator(root)
     ev.eval_file(root / "test.mlody")
     assert ev.roots["test:r"].found_name == "my_type"  # type: ignore[attr-defined]
+
+
+def test_resolve_handles_struct_config(fs: FakeFilesystem, project_root: Path) -> None:
+    """resolve() must not crash when an action's config field is a Struct (old format).
+
+    Older workspaces stored action config as a Struct (dict-based), not a list.
+    The resolver must handle both formats without raising TypeError.
+    """
+    ev = Evaluator(root=project_root)
+    old_action = Struct(
+        kind="action",
+        name="legacy_action",
+        inputs=[],
+        outputs=[],
+        config=Struct(key="val"),  # old dict-based format, not a list
+    )
+    key = "mlody/teams/legacy:legacy_action"
+    ev.actions[key] = old_action
+    ev._actions_by_name["legacy_action"] = old_action
+
+    ev.resolve()  # must not raise TypeError
+
+    resolved = ev.actions[key]
+    assert isinstance(resolved.config, Struct)
 
 
 def test_inmemoryfs_roots_smoketest() -> None:

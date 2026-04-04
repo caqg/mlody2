@@ -549,7 +549,9 @@ class Evaluator:
             fields = dict(entity.as_mapping())
             fields["inputs"] = [_resolve_value(v) for v in fields.get("inputs", [])]
             fields["outputs"] = [_resolve_value(v) for v in fields.get("outputs", [])]
-            fields["config"] = [_resolve_value(v) for v in fields.get("config", [])]
+            _config = fields.get("config", [])
+            if isinstance(_config, list):
+                fields["config"] = [_resolve_value(v) for v in _config]
             new_entity = Struct(**fields)
             self.actions[key] = new_entity
             self._actions_by_name[entity.name] = new_entity
@@ -560,7 +562,9 @@ class Evaluator:
             fields = dict(entity.as_mapping())
             fields["inputs"] = [_resolve_value(v) for v in fields.get("inputs", [])]
             fields["outputs"] = [_resolve_value(v) for v in fields.get("outputs", [])]
-            fields["config"] = [_resolve_value(v) for v in fields.get("config", [])]
+            _config = fields.get("config", [])
+            if isinstance(_config, list):
+                fields["config"] = [_resolve_value(v) for v in _config]
             fields["action"] = _resolve_action(fields.get("action"))
             new_entity = Struct(**fields)
             self.tasks[key] = new_entity

@@ -220,10 +220,22 @@ class TestEntitySpecWildcard:
         assert result.entity.path == "foo"
         assert result.entity.wildcard is True
 
-    def test_empty_path_with_wildcard_raises(self) -> None:
-        # Scenario: //... (empty path + wildcard) raises EntityParseError
-        with pytest.raises(EntityParseError):
-            parse_label("//...")
+    def test_root_wildcard_no_path_allowed(self) -> None:
+        # Scenario: //... is valid — wildcard with no path prefix means "search everywhere"
+        result = parse_label("//...")
+        assert result.entity is not None
+        assert result.entity.path is None
+        assert result.entity.wildcard is True
+
+    def test_root_wildcard_with_root_name_and_attr_path(self) -> None:
+        # Scenario: @common//...:downloader'outputs.model
+        result = parse_label("@common//...:downloader'outputs.model")
+        assert result.entity is not None
+        assert result.entity.root == "common"
+        assert result.entity.path is None
+        assert result.entity.wildcard is True
+        assert result.entity.name == "downloader"
+        assert result.attribute_path == ("outputs", "model")
 
 
 class TestEntitySpecQuery:

@@ -300,6 +300,26 @@ class TestResolve:
         assert force("hello") == "hello"
         assert force(None) is None
 
+    def test_resolve_module_label_returns_entities(
+        self, project: Path, fs: FakeFilesystem
+    ) -> None:
+        """@root//path without :name returns all entities from that module as a dict."""
+        from starlarkish.core.struct import Struct
+
+        fs.create_file(
+            str(ROOT / "mlody/teams/lexica/pipeline.mlody"),
+            contents='builtins.register("action", Struct(kind="action", name="trainer", inputs=[], outputs=[], config=[]))',
+        )
+        ws = Workspace(monorepo_root=project)
+        ws.load()
+
+        result = ws.resolve("@lexica//pipeline")
+        assert isinstance(result, dict)
+        assert "action/trainer" in result
+        assert isinstance(result["action/trainer"], Struct)
+        assert result["action/trainer"].name == "trainer"  # type: ignore[attr-defined]
+
+
 
 # ---------------------------------------------------------------------------
 # stdout safety (LSP transport guard)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
@@ -267,6 +268,7 @@ def show(ctx: click.Context, targets: tuple[str, ...]) -> None:
                 _logger.debug("Resolved %s to %s", target.split("|")[0], resolved_sha)
 
             _committoid, inner_label = _parse_inner(target)
+            click.echo(json.dumps(dataclasses.asdict(_parse_label_struct(target)), indent=2))
             _maybe_print_dag_plan(workspace, inner_label)
             value = force(workspace.resolve(inner_label))
 
@@ -296,15 +298,6 @@ def show(ctx: click.Context, targets: tuple[str, ...]) -> None:
         except KeyError as exc:
             has_error = True
             click.echo(click.style(f"Error: {exc}", fg="red"), err=True)
-            if hasattr(workspace, "root_infos"):
-                available = list(workspace.root_infos.keys())
-                if available:
-                    click.echo(
-                        click.style(
-                            f"Available roots: {', '.join(available)}", fg="red"
-                        ),
-                        err=True,
-                    )
             continue
         except AttributeError as exc:
             has_error = True

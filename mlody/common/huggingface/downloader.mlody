@@ -31,10 +31,13 @@ task(
             value(name="model", type=string(), location=named_arg()),
             value(name="sha", type=string(), location=named_arg()), # should be a different type, maybe a commit-sha or a committoid
             # effects should be more precise and say which outputs are not affected and other things
-            value(name="workers", type=integer(min=1, max=8), location=named_arg()),
+            value(name="workers", type=integer(min=1, max=8), default=1, location=named_arg()),
             #        value(name="workers", type=integer(min=1, max=8), default=1, location=named_arg(), effects=["no-hash-contribution"]),
         ],
         implementation = [":model-download"],
+        requirements = [
+            cpu_requirement(2),
+        ],
     )
 )
 	

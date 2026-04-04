@@ -157,15 +157,12 @@ def _parse_entity_fragment(raw: str, fragment: str) -> tuple[EntitySpec, str | N
         wildcard = True
         remainder = remainder[:-4]  # strip "/..."
     elif remainder == "...":
-        # //... — empty path with only wildcard is disallowed
-        raise EntityParseError(
-            raw,
-            "'//...' is not valid: path must be non-empty before wildcard",
-            entity_fragment=fragment,
-        )
+        # //... — wildcard with no path prefix: search everywhere under the root
+        wildcard = True
+        remainder = ""
 
-    path = remainder
-    if not path:
+    path: str | None = remainder if remainder else None
+    if not wildcard and path is None:
         raise EntityParseError(
             raw,
             "entity path must not be empty after '//'",

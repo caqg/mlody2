@@ -216,7 +216,9 @@ class Workspace:
 
         Supports:
         - Entity-spec labels with a name:  @root//pkg:name, //pkg:name, :name
-        - Entity-spec labels without name: @root//pkg, //pkg  → root struct
+        - Entity-spec labels without name, no path: @root  → root struct
+        - Entity-spec labels without name, with path: @root//pkg/module → dict of all
+          entities registered from that module, keyed by ``"kind/name"``
         - Workspace-level attribute labels: 'attr, 'attr.subfield
         """
         def _step(obj: object, segment: str) -> object:
@@ -357,15 +359,40 @@ class Workspace:
                             obj = _step(obj, field)
                         return obj
 
+                    if can_registry_resolve and entity.root is not None:
+                        # We tried the registry-based path but found nothing.
+                        # Give a clear error rather than falling through to parse_target
+                        # which would produce a confusing "root not found" message.
+                        label_str = target if isinstance(target, str) else str(target)
+                        msg = (
+                            f"Entity {base_name!r} not found"
+                            + (f" in module {stem!r}" if stem else "")
+                            + f" (label: {label_str!r})"
+                        )
+                        raise KeyError(msg)
+
                 if lbl.entity is not None and lbl.entity.name is None:
-                    # No specific entity name: return the root struct so the
-                    # caller can inspect all entities registered on that root.
+                    # No specific entity name.
                     roots = self._evaluator._roots_by_name
                     if lbl.entity.root is not None:
                         if lbl.entity.root not in roots:
                             available = sorted(roots)
                             msg = f"Root {lbl.entity.root!r} not found; available roots: {available}"
                             raise KeyError(msg)
+                        if lbl.entity.path and lbl.entity.root in self._root_infos:
+                            # Module-level label (e.g. @common//huggingface/downloader):
+                            # return all entities registered from that module as a dict.
+                            stem_parts_mod: list[str] = []
+                            root_rel_mod = self._root_infos[lbl.entity.root].path.lstrip("/").rstrip("/")
+                            if root_rel_mod:
+                                stem_parts_mod.append(root_rel_mod)
+                            stem_parts_mod.append(lbl.entity.path.lstrip("/").rstrip("/"))
+                            mod_stem = "/".join([p for p in stem_parts_mod if p])
+                            return {
+                                f"{k[0]}/{k[2]}": v
+                                for k, v in self._evaluator.all.items()
+                                if isinstance(k, tuple) and len(k) == 3 and k[1] == mod_stem
+                            }
                         return roots[lbl.entity.root]
                     # No root and no name: return all roots dict
                     return dict(roots)
