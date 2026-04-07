@@ -54,17 +54,37 @@ o_py_test(
 )
 
 o_py_library(
+    name = "location_composition_lib",
+    srcs = ["location_composition.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//common/python/starlarkish/core:core_lib",
+    ],
+)
+
+o_py_library(
     name = "workspace_lib",
     srcs = ["workspace.py"],
     data = ["builtins.mlody"],
     visibility = ["//:__subpackages__"],
     deps = [
+        ":location_composition_lib",
         ":source_parser_lib",
         ":targets_lib",
         "//common/python/starlarkish/core:core_lib",
         "//common/python/starlarkish/evaluator:evaluator_lib",
         "//mlody/common:context_lib",  # keep
         "@pip//rich",
+    ],
+)
+
+o_py_test(
+    name = "location_composition_test",
+    srcs = ["location_composition_test.py"],
+    deps = [
+        ":location_composition_lib",
+        "//common/python/starlarkish/core:core_lib",
+        "@pip//pytest",
     ],
 )
 
@@ -76,6 +96,7 @@ o_py_test(
         "//common/python/starlarkish",
         "//common/python/starlarkish/core:core_lib",
         "//mlody/common:context_lib",  # keep
+        "//mlody/resolver:resolver_lib",  # keep — tests import MlodyUnresolvedValue
         "@pip//pyfakefs",
         "@pip//pytest",
         "@pip//rich",
@@ -87,6 +108,7 @@ o_py_library(
     srcs = [
         "__init__.py",
         "dag.py",
+        "location_composition.py",
         "plan.py",
         "source_parser.py",
         "targets.py",
@@ -94,6 +116,7 @@ o_py_library(
     ],
     visibility = ["//:__subpackages__"],
     deps = [
+        ":location_composition_lib",
         "//common/python/starlarkish/core:core_lib",
         "//common/python/starlarkish/evaluator:evaluator_lib",
         "//mlody/common:common_lib",

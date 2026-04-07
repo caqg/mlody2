@@ -14,6 +14,10 @@ from rich.syntax import Syntax
 from starlarkish.core.struct import Struct
 from starlarkish.evaluator.evaluator import Evaluator
 from mlody.common.context import build_ctx
+from mlody.core.location_composition import (
+    _LocationComposeError,
+    compose_location,
+)
 from mlody.core.source_parser import extract_entity_ranges
 from mlody.core.targets import TargetAddress, parse_target, resolve_target_value
 
@@ -453,6 +457,117 @@ class Workspace:
                         }
                         matches.sort(key=lambda kv: kind_order.get(kv[0], 99))
                         obj = matches[0][1]
+
+                        # Record-traversal branch (design D-3): activates only when
+                        # the label has exactly one field-path segment and the resolved
+                        # base value is a record-typed value struct.  Multi-segment
+                        # paths fall through to the generic _step loop below.
+                        #
+                        # NOTE: avoid `isinstance(obj, Struct)` here — `Struct` is
+                        # re-imported as a local variable later in this function (in the
+                        # workspace-attribute branch), which would cause an
+                        # UnboundLocalError before that assignment.  Use getattr guards
+                        # instead; they are sufficient because only Struct instances carry
+                        # `kind` and `type` attributes with string values.
+                        obj_type = getattr(obj, "type", None)
+                        _is_record_type = (
+                            getattr(obj_type, "kind", None) == "record"
+                            or getattr(obj_type, "_root_kind", None) == "record"
+                        )
+                        if (
+                            len(field_parts) == 1
+                            and getattr(obj, "kind", None) == "value"
+                            and _is_record_type
+                        ):
+                            # Local imports — kept local to limit the impact of new
+                            # dependency directions (workspace → resolver is new).
+                            # _Struct alias avoids the UnboundLocalError caused by the
+                            # `from starlarkish.core.struct import Struct` re-import
+                            # in the workspace-attribute branch below, which Python's
+                            # compiler treats as a local assignment for the whole function.
+                            from starlarkish.core.struct import Struct as _Struct  # noqa: PLC0415
+                            from mlody.resolver.label_value import (  # noqa: PLC0415
+                                MlodyUnresolvedValue as _MlodyUnresolvedValue,
+                            )
+                            from mlody.core.label import (  # noqa: PLC0415
+                                parse_label as _core_parse_label,
+                            )
+
+                            field_name = field_parts[0]
+                            value_type = obj.type  # type: ignore[union-attr]
+
+                            # Field lookup order (design D-4):
+                            # 1. Search type.fields for a matching entry by name.
+                            # 2. Fall back to getattr(value.type, field_name).
+                            # 3. If both miss, return MlodyUnresolvedValue.
+                            _SENTINEL = object()
+                            field_obj: object = _SENTINEL
+                            # fields may be a direct struct field (tests) or
+                            # inside the `attributes` dict produced by
+                            # _make_factory / extend_attrs (real typedefs).
+                            _direct_fields = getattr(value_type, "fields", None)
+                            _attrs_dict = getattr(value_type, "attributes", None)
+                            _attrs_fields = (
+                                _attrs_dict.get("fields")
+                                if isinstance(_attrs_dict, dict)
+                                else None
+                            )
+                            fields_list: list[object] = list(
+                                _direct_fields or _attrs_fields or []
+                            )
+                            for f in fields_list:
+                                if getattr(f, "name", None) == field_name:
+                                    field_obj = f
+                                    break
+
+                            if field_obj is _SENTINEL:
+                                # Not in fields list — try direct type attribute fallback.
+                                fallback = getattr(value_type, field_name, _SENTINEL)
+                                if fallback is _SENTINEL:
+                                    available = [
+                                        str(getattr(f, "name", "?")) for f in fields_list
+                                    ]
+                                    lbl_str = target if isinstance(target, str) else str(target)
+                                    lbl_obj = _core_parse_label(lbl_str) if isinstance(lbl_str, str) else lbl_str
+                                    return _MlodyUnresolvedValue(
+                                        label=lbl_obj,
+                                        reason=(
+                                            f"field {field_name!r} not found on record type "
+                                            f"{getattr(value_type, 'name', '?')!r}; "
+                                            f"available fields: {available}"
+                                        ),
+                                    )
+                                return fallback
+
+                            # field_obj is a Struct from type.fields; compose location.
+                            # Use object type hints to avoid referencing the locally
+                            # re-imported Struct name (see note above on UnboundLocalError).
+                            field_loc_obj: object = getattr(field_obj, "location", None)
+                            parent_loc_obj: object = getattr(obj, "location", None)
+                            try:
+                                composed_loc = compose_location(
+                                    parent_loc=parent_loc_obj,  # type: ignore[arg-type]
+                                    field_loc=field_loc_obj,  # type: ignore[arg-type]
+                                    field_name=field_name,
+                                )
+                            except _LocationComposeError as exc:
+                                lbl_str = target if isinstance(target, str) else str(target)
+                                lbl_obj = _core_parse_label(lbl_str) if isinstance(lbl_str, str) else lbl_str
+                                return _MlodyUnresolvedValue(
+                                    label=lbl_obj,
+                                    reason=str(exc),
+                                )
+
+                            # Return the field struct with its location replaced by
+                            # the composed location derived from the parent context.
+                            # Use hasattr(_fields) as a Struct duck-type check to avoid
+                            # referencing the locally re-imported Struct name.
+                            if hasattr(field_obj, "_fields"):
+                                updated_fields = dict(field_obj._fields)  # type: ignore[union-attr]
+                                updated_fields["location"] = composed_loc
+                                return _Struct(**updated_fields)
+                            return field_obj
+
                         for field in field_parts:
                             obj = _step(obj, field)
                         return obj

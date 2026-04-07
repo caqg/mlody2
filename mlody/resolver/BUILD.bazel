@@ -13,6 +13,7 @@ o_py_library(
     visibility = ["//:__subpackages__"],
     deps = [
         "//mlody/core:core_lib",
+        "//mlody/core:location_composition_lib",
         "//mlody/db:db_lib",  # keep — resolver.py imports open_db, write_evaluation, compute_local_diff_sha
     ],
 )

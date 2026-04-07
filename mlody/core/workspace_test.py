@@ -710,3 +710,291 @@ builtins.register("task", Struct(
         assert getattr(entity, "kind", None) == "task"
         assert getattr(entity, "name", None) == "meta_task"
         assert getattr(entity, "extra_meta", None) == "important_value"
+
+
+# ---------------------------------------------------------------------------
+# Record-aware field traversal (design §D-3, §D-4, §D-5)
+# ---------------------------------------------------------------------------
+
+
+# Shared helpers for record traversal tests.
+_RECORD_ROOTS_MLODY = """\
+load("//mlody/core/builtins.mlody", "root")
+root(name="bert", path="//mlody/teams/bert", description="bert team")
+"""
+
+_RECORD_PORT_BUILTINS = """\
+def root(name, path, description=""):
+    builtins.register("root", struct(
+        name=name,
+        path=path,
+        description=description,
+    ))
+"""
+
+
+def _make_record_project(fs: FakeFilesystem, entity_mlody: str) -> Path:
+    """Create a minimal fake workspace with one entity file."""
+    root = Path("/rec_project")
+    fs.create_file(str(root / "mlody/core/builtins.mlody"), contents=_RECORD_PORT_BUILTINS)
+    fs.create_file(str(root / "mlody/roots.mlody"), contents=_RECORD_ROOTS_MLODY)
+    fs.create_dir(str(root / "mlody/teams/bert"))
+    fs.create_file(str(root / "mlody/teams/bert/entity.mlody"), contents=entity_mlody)
+    return root
+
+
+class TestRecordAwareFieldTraversal:
+    """Requirement: Record-aware field lookup in Workspace.resolve.
+
+    Scenarios trace to:
+      openspec/changes/mlody-field-traversal/specs/field-traversal/spec.md
+    """
+
+    def test_field_found_in_type_fields_returns_struct_with_composed_location(
+        self, fs: FakeFilesystem
+    ) -> None:
+        """Scenario: Field found in type.fields returns field value struct.
+
+        The returned struct must have its location replaced by the composed
+        location (parent path joined with field path).
+        """
+        entity_mlody = """\
+model_info_field = Struct(
+    name="model_info",
+    type=None,
+    location=Struct(kind="posix", type="posix", name="model_info_loc", path="info"),
+)
+record_type = Struct(
+    kind="record",
+    name="ModelType",
+    fields=[model_info_field],
+)
+parent_loc = Struct(kind="posix", type="posix", name="parent_loc", path="models/bert")
+builtins.register("value", Struct(
+    kind="value",
+    name="my_model",
+    type=record_type,
+    location=parent_loc,
+    default=None,
+    source=None,
+    _lineage=[],
+))
+"""
+        root = _make_record_project(fs, entity_mlody)
+        ws = Workspace(monorepo_root=root)
+        ws.load()
+
+        result = ws.resolve("@bert//entity:my_model.model_info")
+
+        assert isinstance(result, Struct)
+        loc = getattr(result, "location", None)
+        assert loc is not None
+        # Composed path: "models/bert/info"
+        assert getattr(loc, "path", None) == "models/bert/info"
+
+    def test_field_found_via_type_attribute_fallback(
+        self, fs: FakeFilesystem
+    ) -> None:
+        """Scenario: Field found via type attribute fallback.
+
+        When field_name is not in type.fields but getattr(value.type, field_name)
+        succeeds, that result is returned.
+        """
+        entity_mlody = """\
+record_type = Struct(
+    kind="record",
+    name="ModelType",
+    fields=[],
+    weights="direct_attr_value",
+)
+parent_loc = Struct(kind="posix", type="posix", name="loc", path="models")
+builtins.register("value", Struct(
+    kind="value",
+    name="my_model",
+    type=record_type,
+    location=parent_loc,
+    default=None,
+    source=None,
+    _lineage=[],
+))
+"""
+        root = _make_record_project(fs, entity_mlody)
+        ws = Workspace(monorepo_root=root)
+        ws.load()
+
+        result = ws.resolve("@bert//entity:my_model.weights")
+
+        assert result == "direct_attr_value"
+
+    def test_non_record_base_value_falls_through_to_generic_traversal(
+        self, fs: FakeFilesystem
+    ) -> None:
+        """Scenario: Non-record base value does not activate record-traversal branch.
+
+        A value with type.kind != "record" falls through to the existing _step
+        loop, which uses getattr.  Here we verify it still resolves the field
+        via generic traversal (the attribute exists on the struct directly).
+        """
+        entity_mlody = """\
+tensor_type = Struct(kind="tensor", name="TensorType", fields=[])
+builtins.register("value", Struct(
+    kind="value",
+    name="my_tensor",
+    type=tensor_type,
+    location=None,
+    default=None,
+    source=None,
+    _lineage=[],
+    name_field="my_tensor",
+))
+"""
+        root = _make_record_project(fs, entity_mlody)
+        ws = Workspace(monorepo_root=root)
+        ws.load()
+
+        # .kind exists as a direct attribute on the struct → generic traversal succeeds
+        result = ws.resolve("@bert//entity:my_tensor.kind")
+        assert result == "value"
+
+    def test_missing_field_returns_mlody_unresolved_value(
+        self, fs: FakeFilesystem
+    ) -> None:
+        """Scenario: Missing field returns MlodyUnresolvedValue listing available fields."""
+        from mlody.resolver.label_value import MlodyUnresolvedValue
+
+        entity_mlody = """\
+name_field = Struct(name="name", type=None, location=None)
+record_type = Struct(kind="record", name="ModelType", fields=[name_field])
+builtins.register("value", Struct(
+    kind="value",
+    name="my_model",
+    type=record_type,
+    location=None,
+    default=None,
+    source=None,
+    _lineage=[],
+))
+"""
+        root = _make_record_project(fs, entity_mlody)
+        ws = Workspace(monorepo_root=root)
+        ws.load()
+
+        result = ws.resolve("@bert//entity:my_model.ghost_field")
+
+        assert isinstance(result, MlodyUnresolvedValue)
+        assert "ghost_field" in result.reason
+        assert "name" in result.reason  # available fields listed
+
+    def test_fields_list_entry_takes_precedence_over_type_attribute(
+        self, fs: FakeFilesystem
+    ) -> None:
+        """Scenario: Fields list entry takes precedence over type attribute.
+
+        When type.fields contains an entry named "kind" and getattr(value.type,
+        "kind") also returns a different value, the fields list wins.
+        """
+        entity_mlody = """\
+kind_field = Struct(
+    name="kind",
+    type=None,
+    location=Struct(kind="posix", type="posix", name="kind_loc", path="kind_dir"),
+)
+record_type = Struct(
+    kind="record",
+    name="ModelType",
+    fields=[kind_field],
+)
+parent_loc = Struct(kind="posix", type="posix", name="parent_loc", path="models")
+builtins.register("value", Struct(
+    kind="value",
+    name="my_model",
+    type=record_type,
+    location=parent_loc,
+    default=None,
+    source=None,
+    _lineage=[],
+))
+"""
+        root = _make_record_project(fs, entity_mlody)
+        ws = Workspace(monorepo_root=root)
+        ws.load()
+
+        # The fields list contains "kind"; getattr(record_type, "kind") == "record".
+        # The fields list must take precedence, so we get the field struct, not "record".
+        result = ws.resolve("@bert//entity:my_model.kind")
+
+        assert isinstance(result, Struct)
+        # Result is the field struct (with composed location), not the string "record".
+        assert getattr(result, "name", None) == "kind"
+        loc = getattr(result, "location", None)
+        assert loc is not None
+        assert getattr(loc, "path", None) == "models/kind_dir"
+
+
+class TestRecordFieldTraversalErrorPropagation:
+    """Requirement: Location composition error propagated as MlodyUnresolvedValue."""
+
+    def test_cross_kind_compose_error_returned_as_unresolved(
+        self, fs: FakeFilesystem
+    ) -> None:
+        """Scenario: Cross-kind compose error returned as MlodyUnresolvedValue."""
+        from mlody.resolver.label_value import MlodyUnresolvedValue
+
+        entity_mlody = """\
+weights_field = Struct(
+    name="weights",
+    type=None,
+    location=Struct(kind="s3", type="s3", name="s3_loc", path="bucket/weights"),
+)
+record_type = Struct(kind="record", name="ModelType", fields=[weights_field])
+# Parent has posix kind; field has s3 kind → cross-kind compose error.
+parent_loc = Struct(kind="posix", type="posix", name="parent_loc", path="models")
+builtins.register("value", Struct(
+    kind="value",
+    name="my_model",
+    type=record_type,
+    location=parent_loc,
+    default=None,
+    source=None,
+    _lineage=[],
+))
+"""
+        root = _make_record_project(fs, entity_mlody)
+        ws = Workspace(monorepo_root=root)
+        ws.load()
+
+        result = ws.resolve("@bert//entity:my_model.weights")
+
+        assert isinstance(result, MlodyUnresolvedValue)
+        assert "cross-kind" in result.reason.lower() or "posix" in result.reason
+
+    def test_multi_segment_field_path_does_not_activate_record_traversal(
+        self, fs: FakeFilesystem
+    ) -> None:
+        """Scenario: Multi-segment field_path does NOT activate record-traversal branch.
+
+        When field_path has more than one segment, the existing generic _step /
+        getattr traversal is used instead.
+        """
+        entity_mlody = """\
+record_type = Struct(kind="record", name="ModelType", fields=[])
+# The value struct has a direct .sub attribute for generic traversal.
+sub_struct = Struct(value=42)
+builtins.register("value", Struct(
+    kind="value",
+    name="my_model",
+    type=record_type,
+    location=None,
+    default=None,
+    source=None,
+    _lineage=[],
+    sub=sub_struct,
+))
+"""
+        root = _make_record_project(fs, entity_mlody)
+        ws = Workspace(monorepo_root=root)
+        ws.load()
+
+        # Two-segment path: "sub.value" — falls through to generic _step loop.
+        result = ws.resolve("@bert//entity:my_model.sub.value")
+        assert result == 42
