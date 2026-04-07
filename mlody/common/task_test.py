@@ -14,6 +14,7 @@ _RULE_MLODY = (_THIS_DIR.parent / "core" / "rule.mlody").read_text()
 _ATTRS_MLODY = (_THIS_DIR / "attrs.mlody").read_text()
 _TYPES_MLODY = (_THIS_DIR / "types.mlody").read_text()
 _LOCATIONS_MLODY = (_THIS_DIR / "locations.mlody").read_text()
+_REPRESENTATION_MLODY = (_THIS_DIR / "representation.mlody").read_text()
 _VALUES_MLODY = (_THIS_DIR / "values.mlody").read_text()
 _ACTION_MLODY = (_THIS_DIR / "action.mlody").read_text()
 _TASK_MLODY = (_THIS_DIR / "task.mlody").read_text()
@@ -23,6 +24,7 @@ _BASE_FILES: dict[str, str] = {
     "mlody/common/attrs.mlody": _ATTRS_MLODY,
     "mlody/common/types.mlody": _TYPES_MLODY,
     "mlody/common/locations.mlody": _LOCATIONS_MLODY,
+    "mlody/common/representation.mlody": _REPRESENTATION_MLODY,
     "mlody/common/values.mlody": _VALUES_MLODY,
     "mlody/common/action.mlody": _ACTION_MLODY,
     "mlody/common/task.mlody": _TASK_MLODY,
@@ -31,6 +33,7 @@ _BASE_FILES: dict[str, str] = {
 _PREAMBLE = (
     'load("//mlody/common/types.mlody")\n'
     'load("//mlody/common/locations.mlody")\n'
+    'load("//mlody/common/representation.mlody")\n'
     'load("//mlody/common/values.mlody")\n'
     'load("//mlody/common/action.mlody")\n'
     'load("//mlody/common/task.mlody")\n'
@@ -313,3 +316,88 @@ def test_task_action_equal_location_specs_do_not_conflict() -> None:
     t = ev._tasks_by_name["t"]
     assert t.outputs[0].location.kind == "location"
     assert t.outputs[0].location.type == "posix"
+
+
+# ---------------------------------------------------------------------------
+# TC-016 (5.4): task port with representation=json() survives _merge_value_structs
+# ---------------------------------------------------------------------------
+
+
+def test_task_port_with_representation_survives_merge_task_has_json_action_has_none() -> None:
+    """5.4: task port has representation=json(), action port has representation=None
+    → merged value has representation.name == 'json'.
+    """
+    ev = _eval(
+        'task(\n'
+        '  name="t",\n'
+        '  inputs=[],\n'
+        '  outputs=[value(name="out", type=string(), location=s3(), representation=json())],\n'
+        '  action=action(\n'
+        '    name="act",\n'
+        '    inputs=[],\n'
+        '    outputs=[value(name="out", type=string(), location=s3())],\n'
+        '    implementation=["dummy"]\n'
+        '  )\n'
+        ')\n'
+    )
+    t = ev._tasks_by_name["t"]
+    assert t.outputs[0].representation is not None
+    assert t.outputs[0].representation.name == "json"
+
+
+# ---------------------------------------------------------------------------
+# TC-017 (5.5): conflicting representations on task vs action raise ValueError
+# ---------------------------------------------------------------------------
+
+
+def test_task_conflicting_representations_raise_value_error() -> None:
+    """5.5: task port has representation=json(), action port has a different
+    non-None representation → ValueError naming field 'representation'.
+    """
+    # We create a second representation to have a distinct one for the conflict.
+    # Since the spec only defines json(), we test conflict by using two json() structs
+    # that are identical (no conflict) vs. a raw struct with a different name.
+    # We inject a fake "csv" representation directly as a struct literal for the conflict.
+    with pytest.raises(ValueError, match="representation"):
+        _eval(
+            'task(\n'
+            '  name="t",\n'
+            '  inputs=[],\n'
+            '  outputs=[value(name="out", type=string(), location=s3(), representation=json())],\n'
+            '  action=action(\n'
+            '    name="act",\n'
+            '    inputs=[],\n'
+            '    outputs=[struct(kind="value", name="out", type=string(), location=s3(),'
+            '            representation=struct(kind="representation", name="csv"))],\n'
+            '    implementation=["dummy"]\n'
+            '  )\n'
+            ')\n'
+        )
+
+
+# ---------------------------------------------------------------------------
+# TC-018 (5.6): scoped value registered by _register_scoped_value carries representation
+# ---------------------------------------------------------------------------
+
+
+def test_scoped_value_carries_representation_from_source() -> None:
+    """5.6: task port value with representation=json() → scoped registration
+    has representation.name == 'json'.
+    """
+    ev = _eval(
+        'task(\n'
+        '  name="mytask",\n'
+        '  inputs=[],\n'
+        '  outputs=[value(name="out", type=string(), location=s3(), representation=json())],\n'
+        '  action=action(\n'
+        '    name="act",\n'
+        '    inputs=[],\n'
+        '    outputs=[value(name="out", type=string(), location=s3())],\n'
+        '    implementation=["dummy"]\n'
+        '  )\n'
+        ')\n'
+    )
+    scoped = ev._values_by_name.get("mytask.out")
+    assert scoped is not None
+    assert scoped.representation is not None
+    assert scoped.representation.name == "json"

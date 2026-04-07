@@ -1,0 +1,30 @@
+load("//mlody/core/rule.mlody", "rule")
+load("//mlody/common/attrs.mlody", "attr")
+
+
+def _representation_impl(ctx):
+    rep_struct = Struct(
+        kind="representation",
+        name=ctx.attr.name,
+    )
+    builtins.register(ctx.kind, rep_struct)
+    # Inject a zero-argument factory consistent with how location factories work.
+    # The factory returns the same singleton struct each call since representations
+    # have no configurable parameters in this phase.
+    captured = rep_struct
+    builtins.inject(ctx.attr.name, lambda: captured)
+    return rep_struct
+
+
+representation = rule(
+    implementation=_representation_impl,
+    kind="representation",
+    attrs={
+        "name": attr(type="string"),
+    },
+)
+
+_json_struct = representation(name="json")
+
+def json():
+    return _json_struct

@@ -1,5 +1,5 @@
 load("//mlody/core/rule.mlody", "rule")
-load("//mlody/common/attrs.mlody", "attr", "field", "extend_attrs", "_make_factory", "_validate_attr_value", "_PRIMITIVE_KINDS", "generic_validate", "_builtin_bool", "_builtin_float", "_builtin_tuple", "_PRIMITIVE_VALIDATORS", "_validate_map", "_validate_tuple")
+load("//mlody/common/attrs.mlody", "attr", "field", "extend_attrs", "_make_factory", "validate_attr_value", "_PRIMITIVE_KINDS", "generic_validate", "_builtin_bool", "_builtin_float", "_builtin_tuple", "_PRIMITIVE_VALIDATORS", "_validate_map", "_validate_tuple")
 
 
 def repr(*, name, type, to_canonical, from_canonical=None):

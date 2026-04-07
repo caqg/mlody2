@@ -1,11 +1,26 @@
 load("//mlody/common/task.mlody")
-load("@common//:types.mlody", "typedef", "string", "integer")
+load("@common//:types.mlody", "top", "typedef", "string", "integer", "record")
 load("//mlody/common/values.mlody")
 load("//mlody/common/locations.mlody")
 load("//mlody/common/action.mlody")
+load("//mlody/common/representation.mlody", "json")
 
 typedef(
     name = "hf-model",
+)
+
+typedef(
+    name = "yolo26",		# other versions might be ok, but not all. For instance yolo8 lacks a model_info.json and multiple tasks
+    base = record(fields=[
+	value(name = "model_info", type=top(), representation=json(), location=posix(path="model_info.json")),
+#	value(name = "model_variants", type = map()),
+    ]),
+)
+
+value(
+    name = "yolo26-model",
+    type = ":yolo26",
+    location = posix(path="~/.cache/mlody/artifacts/huggingface/Ultralytics/YOLOv26/de6601a0e3575f8968a22a383021d1099d990857"),
 )
 
 def named_arg():

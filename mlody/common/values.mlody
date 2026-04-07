@@ -54,13 +54,29 @@ def _lineage_event(author, timestamp, reason):
     )
 
 
+def _resolve_representation_ref(value):
+    if type(value) == "struct":
+        got_kind = python.getattr(value, "kind", None)
+        if got_kind != "representation":
+            raise TypeError(
+                "Expected a representation struct (kind='representation'), got a "
+                + repr(got_kind) + " struct"
+            )
+        return value
+    raise TypeError(
+        "Expected a representation struct, got " + repr(type(value))
+    )
+
+
 def _value_impl(ctx):
     type_raw = python.getattr(ctx.attr, "type", None)
     loc_raw = python.getattr(ctx.attr, "location", None)
     default_raw = python.getattr(ctx.attr, "default", None)
+    rep_raw = python.getattr(ctx.attr, "representation", None)
 
     type_ref = _resolve_type_ref(type_raw) if type_raw != None else None
     loc_ref = _resolve_location_ref(loc_raw) if loc_raw != None else None
+    rep_ref = _resolve_representation_ref(rep_raw) if rep_raw != None else None
 
     value_struct = Struct(
         kind="value",
@@ -69,6 +85,7 @@ def _value_impl(ctx):
         location=loc_ref,
         default=default_raw,
         source=python.getattr(ctx.attr, "source", None),
+        representation=rep_ref,
         _lineage=[],          # managed by MLody, not the user
     )
     builtins.register(ctx.kind, value_struct)
@@ -79,10 +96,11 @@ value = rule(
     implementation=_value_impl,
     kind="value",
     attrs={
-        "name":     attr(type="string"),
-        "type":     attr(type="type_ref", mandatory=False),
-        "location": attr(type="location_ref", mandatory=False),
-        "default":  attr(mandatory=False),
-        "source":   attr(type="string", mandatory=False),
+        "name":           attr(type="string"),
+        "type":           attr(type="type_ref", mandatory=False),
+        "location":       attr(type="location_ref", mandatory=False),
+        "default":        attr(mandatory=False),
+        "source":         attr(type="string", mandatory=False),
+        "representation": attr(type="representation_ref", mandatory=False),
     },
 )

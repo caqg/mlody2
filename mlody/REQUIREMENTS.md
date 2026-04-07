@@ -1,33 +1,34 @@
-# Requirements Document: Mlody Flexible Workspace Resolution
+# Requirements Document: Mlody Value Representation
 
-**Version:** 1.0 **Date:** 2026-03-07 **Prepared by:** Requirements Analyst AI
+**Version:** 1.0 **Date:** 2026-04-07 **Prepared by:** Requirements Analyst AI
 **Status:** Draft
 
 ---
 
 ## 1. Executive Summary
 
-Mlody currently constructs its `Workspace` from a single fixed root: the current
-working directory at the time the CLI is invoked. This root is assumed to be the
-monorepo root and is immutable for the lifetime of the process. This is
-sufficient for everyday pipeline authoring, but it prevents users from comparing
-target values across commits, reproducing historical results, or evaluating the
-same pipeline DAG against a specific release or feature branch.
+Mlody values (`value()` declarations) describe named data ports in a pipeline:
+their type, location, and optional default. Currently, a `value()` carries no
+information about _how_ its data is serialised on disk. This matters because the
+same logical value may be materialised in multiple formats: a model might be
+stored both as a canonical binary checkpoint and as a JSON metadata sidecar;
+config files are commonly JSON or YAML; feature vectors may be Parquet or CSV.
 
-The proposed feature introduces **flexible workspace resolution**: a label
-parsing and committoid-to-workspace mapping layer that sits in front of the
-existing `Workspace` constructor. When a target label starts with `@` or `//`,
-behaviour is unchanged and the cwd is used as before. When a label begins with
-anything else, the prefix up to a `|` delimiter is treated as a _committoid_ (a
-commit SHA, branch name, or tag name); mlody resolves this to a canonical full
-SHA via the remote, retrieves the source tree for that commit (using a local
-clone if the commit is already present locally, otherwise a shallow clone from
-`origin`), caches the result under `~/.cache/mlody/workspaces/<SHA>/`, and
-constructs the `Workspace` from that cached root.
+The proposed feature introduces a `representation` attribute on `value()` that
+associates a serialisation format — initially JSON — with a value. A
+representation is a first-class, registered DSL concept (analogous to how
+`location` is a registered kind) so that the framework, tooling, and future
+execution engines can discover and act on serialisation requirements without
+inspecting raw field values.
 
-The expected business value is: reproducible pipeline inspection across time,
-faster iteration during development by targeting specific historical states, and
-a foundation for the future mixed-version graph caching use case.
+The feature is scoped to the DSL layer: parsing, validation, and struct
+construction in the `.mlody` runtime. Actual serialisation and deserialisation
+logic — reading/writing bytes — is deferred to a future phase.
+
+The expected value is: a machine-readable contract for how each pipeline value
+is encoded on disk, enabling future executors to deserialise without ad-hoc
+conventions, and allowing the LSP and tooling to surface representation
+metadata.
 
 ---
 
@@ -35,58 +36,53 @@ a foundation for the future mixed-version graph caching use case.
 
 ### 2.1 In Scope
 
-- Parsing of the extended label syntax (`committoid|path`) in the `show`
-  command.
-- Committoid resolution via `git ls-remote origin` for all input types (SHA,
-  branch name, tag name), with ambiguity detection.
-- Post-resolution local existence check (`git cat-file -t`) used solely to
-  choose the clone strategy (local vs remote).
-- Workspace materialisation: local shallow clone or origin shallow clone into
-  `~/.cache/mlody/workspaces/<SHA>/`.
-- Cache hit detection: reuse an already-materialised workspace directory without
-  network access.
-- Metadata recording: a `<SHA>-meta.json` file alongside each cached workspace
-  directory.
-- File-based locking to guard against concurrent materialisations of the same
-  SHA.
-- Error handling for: network failures, unknown refs, ambiguous short SHAs,
-  corrupt/partial cache entries, and lock contention.
-- A `resolve_workspace()` factory function that returns a ready `Workspace`
-  instance.
-- `show` and `shell` commands (the latter inherits resolution through `show`).
+- A new `representation` attribute on the `value()` rule accepting a
+  representation struct or `None`.
+- A new `representation.mlody` standard file under `mlody/common/` that declares
+  the `json()` built-in representation.
+- Registration of representations in the evaluator's registry under the
+  `"representation"` kind.
+- Validation of the `representation` attribute: any value passed must be a
+  struct with `kind="representation"` (the `"representation_ref"` attr-type).
+- `representation=json()` as the first concrete representation. `json()` is a
+  bare marker (no arguments in this phase); the schema field is TBD for a later
+  phase.
+- `representation` is valid in all `value()` usage sites: top-level
+  declarations, `typedef` field definitions, and `task`/`action`
+  `inputs`/`outputs`/`config` lists.
+- Propagation of the `representation` field through task/action port unification
+  (the existing `_merge_value_structs` mechanism).
+- A new `"representation_ref"` attr-type recognised by `_validate_attr_value()`
+  in `attrs.mlody`.
 
 ### 2.2 Out of Scope
 
-- Mixed-version graphs (different nodes resolving against different commits in a
-  single invocation) — deferred to a future phase.
-- Task output caching (memoising the result of executing a pipeline node).
-- Cache eviction, size limits, or automated cleanup.
-- Making cached workspaces read-only (Bazel must be able to write output
-  directories inside them).
-- Offline mode (network access is assumed whenever a committoid is specified).
-- Support for git remotes other than `origin`.
-- Container image building (shares the workspace caching mechanism but is not
-  part of this feature's CLI surface).
-- Any changes to the `Workspace` class constructor or internals.
-- UI for browsing or managing cached workspaces beyond the metadata file.
+- Actual serialisation/deserialisation of data (reading or writing bytes in any
+  format).
+- Additional representation kinds beyond `json()` (YAML, Parquet, CSV, etc.) —
+  deferred to future changes.
+- Arguments or schema fields on `json()` — the `schema` parameter is a
+  placeholder for a later phase.
+- Changes to the `Workspace` class or the label-resolution pipeline.
+- UI or LSP hover/completion for `representation` values (that is a follow-on
+  LSP change).
+- Migration of existing `.mlody` files to add `representation` — the attribute
+  is optional everywhere.
 
 ### 2.3 Assumptions
 
-- The mlody CLI is always invoked from within a valid monorepo root (enforced by
-  the existing `verify_monorepo_root()` check).
-- The `git` CLI is installed and authenticated for the remote `origin`; ambient
-  git credentials are available.
-- The `gh` CLI is installed and authenticated; this ensures credentials are
-  available for private repo access without mlody managing tokens.
-- The remote is always named `origin`; multi-remote support is not required.
-- Single-process usage: no two mlody processes will routinely race on the same
-  SHA. The lock file is a safety net, not a performance mechanism.
-- Cached workspace entries addressed by full commit SHA are immutable. A given
-  SHA always produces the same source tree.
-- The user is always present and interactive when running mlody in experiment
-  mode; unattended background execution is not required.
-- The cwd may itself be a git worktree rather than the main clone; the feature
-  must handle this transparently.
+- The evaluator already supports `builtins.register(kind, value)` for arbitrary
+  kind strings; adding `"representation"` follows the same pattern as
+  `"location"`.
+- The existing `_merge_value_structs` union logic in `task.mlody` already
+  handles unknown fields gracefully; `representation` needs to be threaded
+  through it explicitly only if the merge logic filters by known fields.
+- `json()` will be injected into the sandbox via `builtins.inject`, making it
+  available without a `load()` call in user `.mlody` files (same pattern as
+  `posix()`, `s3()`, etc.).
+- The `repr` function name in `types.mlody` — already used for representation
+  descriptors in `typedef` — is a different concept from the `representation`
+  attribute on `value()`; these two must not be conflated.
 
 ### 2.4 Constraints
 
@@ -94,21 +90,23 @@ a foundation for the future mixed-version graph caching use case.
 - Type checking: basedpyright strict mode; all new function signatures must
   carry complete type hints.
 - Formatting/linting: ruff.
-- Build rules: `o_py_library`, `o_py_binary`, `o_py_test` from
-  `//build/bzl:python.bzl`; no raw `py_*` rules.
-- Cache directory: `~/.cache/mlody/workspaces/` (XDG cache convention).
+- Build rules: `o_py_library`, `o_py_binary`, `o_py_test`; no raw `py_*` rules.
+- `.mlody` files are Starlark — no Python-only features unless marked
+  `python.*`.
 - The `Workspace` class (`mlody/core/workspace.py`) must not be modified as part
-  of this feature.
+  of this feature unless strictly necessary for registry support.
+- No new `python.*` escapes without explicit prior approval.
 
 ---
 
 ## 3. Stakeholders
 
-| Role                | Name/Group          | Responsibilities                            |
-| ------------------- | ------------------- | ------------------------------------------- |
-| Primary user        | ML engineers / devs | Run `mlody show` against historical commits |
-| Feature author      | Polymath Solutions  | Design, implement, review                   |
-| Future stakeholders | Platform / infra    | Container image build pipeline (future use) |
+| Role                | Name/Group          | Responsibilities                                      |
+| ------------------- | ------------------- | ----------------------------------------------------- |
+| Primary user        | ML pipeline authors | Author `.mlody` files with `representation=json()`    |
+| Feature author      | Polymath Solutions  | Design, implement, review                             |
+| Future stakeholders | Execution engine    | Consume representation metadata during task execution |
+| Future stakeholders | LSP / tooling       | Surface representation in completions and hover       |
 
 ---
 
@@ -116,27 +114,25 @@ a foundation for the future mixed-version graph caching use case.
 
 ### 4.1 Business Objectives
 
-- **BR-001:** Enable engineers to inspect and compare mlody pipeline target
-  values at any commit, branch, or tag without manually checking out that ref.
-- **BR-002:** Enable reproducible pipeline inspection: given the same
-  committoid, mlody must resolve to the same full SHA and source tree every
-  time.
-- **BR-003:** Avoid redundant network operations: once a workspace is cached for
-  a given SHA, subsequent invocations must reuse it without re-fetching.
-- **BR-004:** Lay the groundwork for the future mixed-version graph caching use
-  case by establishing a stable, SHA-keyed workspace cache.
+- **BR-001:** Enable pipeline authors to declare the serialisation format of a
+  value at the DSL level, so that the format is a first-class piece of metadata
+  rather than an implicit convention.
+- **BR-002:** Ensure representation information survives all value composition
+  paths (top-level declarations, typedef fields, task/action ports) so that
+  downstream tooling always has access to it.
+- **BR-003:** Keep the feature additive and non-breaking: all existing `.mlody`
+  files that omit `representation` must continue to evaluate without error.
 
 ### 4.2 Success Metrics
 
-- **KPI-001:** `mlody show <branch>|<label>` resolves and displays the correct
-  value; target: passes integration test against a known fixture commit.
-- **KPI-002:** A second invocation with the same committoid completes without
-  any `git clone` subprocess (cache hit); measurement: mock or subprocess
-  capture in tests.
-- **KPI-003:** An invalid committoid produces a human-readable error message
-  within 5 seconds; measurement: manual test.
-- **KPI-004:** Lock contention produces an immediate, informative error rather
-  than a hang; measurement: unit test with a pre-placed lock file.
+- **KPI-001:** A `value()` with `representation=json()` evaluates without error
+  and the resulting struct has `representation.kind == "representation"` and
+  `representation.name == "json"`.
+- **KPI-002:** A `value()` without `representation` evaluates and the resulting
+  struct has `representation == None` (backward compatibility).
+- **KPI-003:** Passing a non-representation struct (e.g. a `location` struct) as
+  `representation` raises a `TypeError` with a clear message.
+- **KPI-004:** All existing `//mlody/...` tests pass unchanged.
 
 ---
 
@@ -144,293 +140,210 @@ a foundation for the future mixed-version graph caching use case.
 
 ### 5.1 User Personas
 
-**Persona 1: ML Engineer (primary)**
+**Persona 1: ML Pipeline Author (primary)**
 
-- Goals: quickly inspect a target value as it was on `main` last week; compare
-  config between two branches; reproduce a result from a tagged release.
-- Pain points: currently must `git stash`, `git checkout`, re-run mlody, then
-  restore — slow and error-prone.
-- Needs: a single command that handles all of that transparently.
+- Goals: declare that a model's metadata file is JSON so that the executor knows
+  how to read it; express this once in the value definition rather than in each
+  task's implementation.
+- Pain points: currently there is no standard place to record serialisation
+  format; each action implementation must guess or re-encode the contract.
+- Needs: a concise, optional attribute on `value()` that is validated at parse
+  time.
+
+**Persona 2: Execution Engine Developer (future consumer)**
+
+- Goals: inspect `value.representation` to choose the correct deserialiser when
+  a task runs.
+- Needs: a stable, machine-readable struct with a `kind` field and a `name`
+  field (`"json"`, etc.).
 
 ### 5.2 User Stories
 
-**Epic 1: Historical Target Inspection**
+**Epic 1: Declare Representation on a Value**
 
-- **US-001:** As an ML engineer, I want to run
-  `mlody show main|@lexica//models:bert` so that I can see the value of that
-  target at the current tip of `main` without checking out that branch.
-  - Acceptance Criteria: Given I am at the monorepo root on any branch, when I
-    run the command, then mlody resolves `main` to a full SHA, materialises or
-    reuses the workspace for that SHA, and prints the resolved value.
+- **US-001:** As a pipeline author, I want to write
+  `value(name="model_info", type=top(), representation=json(), location=posix(path="model_info.json"))`
+  so that I can express that the file is JSON without hard-coding this in the
+  action implementation.
+  - Acceptance Criteria: Given a valid `.mlody` file with the above, when the
+    workspace is loaded, then `ws.resolve(":model_info").representation.name`
+    equals `"json"`.
   - Priority: Must Have
 
-- **US-002:** As an ML engineer, I want to run
-  `mlody show v1.2.0|@lexica//models:bert` so that I can inspect the value at a
-  tagged release.
-  - Acceptance Criteria: Given a valid tag `v1.2.0` exists on `origin`, when I
-    run the command, then the tag is resolved to its full commit SHA and the
-    workspace for that SHA is used.
+- **US-002:** As a pipeline author, I want to omit `representation` from a
+  `value()` and have it default to `None` so that I do not need to update
+  existing files.
+  - Acceptance Criteria: Given a `.mlody` file with
+    `value(name="x", type=string(), location=posix())` (no `representation`),
+    when evaluated, the resulting struct's `representation` field is `None`.
   - Priority: Must Have
 
-- **US-003:** As an ML engineer, I want to run
-  `mlody show abc1234|@lexica//models:bert` so that I can inspect a specific
-  commit by short SHA.
-  - Acceptance Criteria: Given `abc1234` unambiguously identifies a single
-    commit on `origin`, when I run the command, then the full SHA is resolved
-    via the remote and the correct workspace is used.
+- **US-003:** As a pipeline author, I want to use `representation=json()` inside
+  a `typedef(fields=[...])` so that every value of that type inherits the
+  representation.
+  - Acceptance Criteria: Given
+    `typedef(name="foo", base=record(fields=[value( name="bar", type=string(), representation=json(), location=posix())]))`,
+    when evaluated, the nested value struct has `representation.name == "json"`.
   - Priority: Must Have
 
-- **US-004:** As an ML engineer, I want unchanged behaviour for
-  `mlody show @lexica//models:bert` so that existing scripts and habits are not
-  broken.
-  - Acceptance Criteria: Given a label starting with `@` or `//`, when I run
-    `mlody show`, then cwd is used as the workspace root identically to today.
+- **US-004:** As a pipeline author, I want to use `representation=json()` on
+  `value()` declarations inside `task(inputs=[...])` and `action(outputs=[...])`
+  so that port-level representations are declared alongside port-level types and
+  locations.
+  - Acceptance Criteria: A task/action port value carrying
+    `representation=json()` survives the port-unification merge with the
+    representation field intact.
   - Priority: Must Have
 
-- **US-005:** As an ML engineer, I want a clear error message when I mistype a
-  branch or tag name so that I know immediately what went wrong.
-  - Acceptance Criteria: Given a committoid that does not resolve to any known
-    ref on `origin`, when I run `mlody show`, then mlody exits 1 and prints a
-    message identifying the unknown ref.
-  - Priority: Must Have
-
-- **US-006:** As an ML engineer, I want a clear error when a short SHA is
-  ambiguous so that I know to provide a longer SHA.
-  - Acceptance Criteria: Given a short SHA that matches multiple commits on
-    `origin`, when I run `mlody show`, then mlody exits 1 and tells me the input
-    was ambiguous.
+- **US-005:** As a pipeline author, I want a clear error if I accidentally pass
+  a `location` struct as `representation` so that I catch mistakes at load time.
+  - Acceptance Criteria: Given
+    `value(name="x", type=string(), representation=posix(), location=posix())`,
+    when evaluated, a `TypeError` is raised naming the expected kind
+    (`"representation"`) and the actual kind (`"location"`).
   - Priority: Must Have
 
 ---
 
 ## 6. Functional Requirements
 
-### 6.1 Label Parsing
+### 6.1 Representation Registry Kind
 
-**FR-001: Committoid prefix detection**
+**FR-001: `"representation"` registry kind**
 
-- Description: When a target label is passed to `show`, inspect it before
-  passing it to `Workspace.resolve()`. If the label starts with `@` or `//`,
-  treat cwd as the workspace root (unchanged behaviour). Otherwise, split on the
-  first `|` character to extract the committoid and the inner label.
-- Inputs: Raw target string from CLI argument.
-- Processing: String prefix check (`@`, `//`); `str.split('|', maxsplit=1)` if
-  neither prefix matches.
-- Outputs: `(committoid: str | None, inner_label: str)` pair.
+- Description: The evaluator registry gains a new kind string
+  `"representation"`. Representations are registered via
+  `builtins.register("representation", struct(...))` from within `.mlody` files
+  (identical pattern to `"location"` and `"type"`).
 - Business Rules:
-  - If `|` is absent and the label does not start with `@` or `//`, this is a
-    parse error — emit a clear message and exit 1.
-  - The inner label (the part after `|`) must itself start with `@` or `//`; if
-    it does not, emit a parse error.
-  - When multiple targets are passed to a single `mlody show` invocation and
-    they resolve to different committoids, the behaviour is [TBD — error for
-    now].
+  - Representations are immutable structs once registered.
+  - Duplicate registration of the same name must follow existing registry
+    semantics (error or overwrite — consistent with how other kinds behave).
 - Priority: Must Have
-- Dependencies: None.
+- Dependencies: Existing evaluator registry mechanism.
 
-### 6.2 Committoid Resolution
+### 6.2 `representation.mlody` Standard File
 
-**FR-002: Remote resolution via `git ls-remote`**
+**FR-002: New `mlody/common/representation.mlody`**
 
-- Description: For all committoid inputs — whether they look like a SHA or a ref
-  name — resolve to a single, unambiguous full SHA by querying `origin` via
-  `git ls-remote`. This is the canonical resolution step for all input types.
-- Inputs: Committoid string (hex SHA, branch name, or tag name).
-- Processing:
-  1. Run `git ls-remote origin` (or `git ls-remote origin <committoid>` for
-     efficiency) against the local repo's `origin`.
-  2. Parse stdout to find matching refs:
-     - For branch-like input: match `refs/heads/<committoid>`.
-     - For tag-like input: match `refs/tags/<committoid>`; if the tag is
-       annotated, prefer the dereferenced entry (`^{}` suffix) to obtain the
-       commit SHA.
-     - For hex-string input: match any ref whose SHA starts with the provided
-       prefix.
-  3. If exactly one commit SHA is identified, use it.
-  4. If zero SHAs match, emit an "unknown ref" error and exit 1.
-  5. If multiple distinct SHAs match (ambiguous short SHA), emit an "ambiguous
-     ref" error and exit 1.
-- Outputs: Full 40-character SHA string.
-- Business Rules:
-  - Ambiguity detection applies to all input types, including hex strings.
-  - If `git ls-remote` fails due to a network or authentication error, emit a
-    clear error message and exit 1. No retry or fallback.
-  - The `--roots` global option is unaffected by this step.
-- Priority: Must Have
-- Dependencies: `git` CLI on `PATH`; network access to `origin`.
+- Description: A new standard Starlark file that declares the built-in
+  representation kinds and injects them into the sandbox. Initially contains
+  only `json()`.
+- Contents (indicative):
 
-**FR-003: Local existence check (clone strategy hint only)**
+  ```starlark
+  load("//mlody/core/rule.mlody", "rule")
+  load("//mlody/common/attrs.mlody", "attr")
 
-- Description: After FR-002 has produced a canonical full SHA, check whether
-  that exact commit exists in the local cwd monorepo to determine the optimal
-  clone strategy. This check does NOT gate or replace ambiguity validation.
-- Inputs: Full 40-character SHA (from FR-002); path to cwd monorepo root.
-- Processing: Run `git cat-file -t <full-sha>` in the local repo. If it exits 0
-  and outputs `commit`, the commit is available locally.
-- Outputs: Boolean `local: bool`.
-- Business Rules:
-  - This step runs only after FR-002 has produced an unambiguous full SHA.
-  - The result is used exclusively to select between FR-004 (local clone) and
-    FR-005 (remote clone).
-  - A `False` result is not an error.
-- Priority: Must Have
-- Dependencies: FR-002 (full SHA already known); `git` CLI.
+  def _representation_impl(ctx):
+      rep_struct = struct(
+          kind="representation",
+          name=ctx.attr.name,
+      )
+      builtins.register("representation", rep_struct)
+      builtins.inject(ctx.attr.name, rep_struct)
+      return rep_struct
 
-### 6.3 Workspace Materialisation
+  representation = rule(
+      implementation=_representation_impl,
+      kind="representation",
+      attrs={
+          "name": attr(type="string"),
+      },
+  )
 
-**FR-004: Cache hit detection**
-
-- Description: Before cloning, check whether a workspace for the resolved SHA
-  already exists and is complete.
-- Inputs: Full SHA; cache root `~/.cache/mlody/workspaces/`.
-- Processing: Check that `~/.cache/mlody/workspaces/<SHA>/` exists and contains
-  `mlody/roots.mlody` (the sentinel file indicating a complete workspace). A
-  directory that exists but lacks the sentinel is treated as corrupt or partial.
-- Outputs: `True` (cache hit — proceed to `Workspace` construction) or `False`
-  (materialisation required).
-- Business Rules:
-  - On cache hit, no clone or network call is made.
-  - A corrupt/partial directory (exists but lacks sentinel) is a fatal error;
-    emit a message naming the directory and instructing the user to delete it,
-    then exit 1. Do not silently re-clone.
-- Priority: Must Have
-- Dependencies: FR-002 (SHA known).
-
-**FR-005: Local shallow clone**
-
-- Description: If FR-003 found the commit locally and FR-004 found no cache hit,
-  clone from the local repo to avoid network access.
-- Inputs: Full SHA; path to cwd monorepo root; destination
-  `~/.cache/mlody/workspaces/<SHA>/`.
-- Processing: Clone from `file:///path/to/monorepo` with `--local --depth 1`,
-  then checkout the target SHA. The exact git invocation is an implementation
-  detail; the requirement is that no network call is made.
-- Outputs: Populated workspace directory at the destination path.
-- Business Rules:
-  - Runs only when FR-003 returned `local=True` and FR-004 returned `False`.
-  - If the clone fails for any reason, clean up the partial destination
-    directory and exit 1 with a clear error message.
-  - Must be preceded by lock acquisition (FR-006).
-- Priority: Must Have
-- Dependencies: FR-003 (local=True); FR-004 (cache miss); FR-006 (lock held).
-
-**FR-006: Origin shallow clone**
-
-- Description: If the commit is not in the local repo (FR-003 returned
-  `local=False`) and no cache hit exists, perform a shallow clone from `origin`.
-- Inputs: Full SHA; destination path.
-- Processing: Run a depth-1 clone from `origin` targeting the resolved SHA. The
-  exact flags (`--filter=blob:none`, `--no-checkout`, etc.) are an
-  implementation detail.
-- Outputs: Populated workspace directory at the destination path.
-- Business Rules:
-  - If the network is unreachable or `origin` rejects the connection, clean up
-    the partial directory and exit 1 with a clear network error message.
-  - Must be preceded by lock acquisition (FR-007).
-- Priority: Must Have
-- Dependencies: FR-003 (local=False); FR-004 (cache miss); FR-007 (lock held).
-
-**FR-007: File-based lock for cache materialisation**
-
-- Description: Guard against two concurrent mlody processes attempting to
-  materialise the same SHA simultaneously.
-- Inputs: Full SHA; cache root.
-- Processing: Before starting any clone, attempt to create
-  `~/.cache/mlody/workspaces/<SHA>.lock` using an atomic, exclusive,
-  non-blocking file-creation operation (e.g. `O_CREAT | O_EXCL`). If the lock
-  file already exists, do not wait — emit an informative error immediately and
-  exit 1.
-- Outputs: Lock file present for the duration of materialisation; removed in a
-  `finally` block on success or failure.
-- Business Rules:
-  - Lock acquisition must be atomic.
-  - The error message on contention must name the lock file path so the user can
-    inspect or delete it manually if a previous process crashed.
-  - Lock is checked only on cache miss (after FR-004).
-- Priority: Must Have
-- Dependencies: FR-004 (cache miss confirmed).
-
-### 6.4 Metadata Recording
-
-**FR-008: Workspace metadata file**
-
-- Description: After successful materialisation, write a JSON metadata file
-  alongside the workspace directory.
-- Inputs: Original committoid string as typed by the user; resolved full SHA;
-  current UTC timestamp; remote URL of `origin`.
-- Processing: Write `~/.cache/mlody/workspaces/<SHA>-meta.json` with the
-  following schema:
-
-  ```json
-  {
-    "requested_ref": "<original committoid as typed by user>",
-    "resolved_sha": "<full 40-character SHA>",
-    "resolved_at": "<ISO 8601 UTC timestamp>",
-    "repo": "<remote URL of origin>"
-  }
+  representation(name="json")
   ```
 
 - Business Rules:
-  - Write after the workspace directory is fully populated and before the lock
-    is released.
-  - If the metadata file already exists (e.g. from a previous materialisation),
-    do not overwrite it.
-  - Use the standard library `json` module; the output must be valid JSON.
+  - `json` is injected as a bare struct (not a factory), i.e.
+    `builtins.inject("json", json_struct)`. `json()` invocations in user files
+    are therefore `json` references, not calls — OR `json` is injected as a
+    zero-argument callable that returns the struct. Either is acceptable; the
+    chosen interface must be consistent with how `json()` is written in user
+    files (the downloader shows `representation=json()` with parentheses, so
+    `json` must be a callable or a zero-argument factory).
+  - No arguments are accepted by `json()` in this phase. Passing any keyword
+    argument must raise a `TypeError`.
+  - The `schema` field is not present in this phase.
 - Priority: Must Have
-- Dependencies: FR-005 or FR-006 (workspace fully materialised).
+- Dependencies: FR-001.
 
-### 6.5 Factory Function
+### 6.3 Attr-Type `"representation_ref"`
 
-**FR-009: `resolve_workspace()` factory function**
+**FR-003: `"representation_ref"` in `_validate_attr_value()`**
 
-- Description: A single public entry point that accepts a raw label string and
-  returns a loaded `Workspace` instance, encapsulating all resolution and
-  materialisation steps.
-- Indicative signature:
-
-  ```python
-  def resolve_workspace(
-      label: str,
-      monorepo_root: Path,
-      roots_file: Path | None = None,
-      print_fn: Callable[..., None] = print,
-  ) -> tuple[Workspace, str | None]:
-      ...
-  ```
-
-  Returns the `Workspace` and the resolved SHA (or `None` if cwd was used, i.e.
-  no committoid was present).
-
-- Processing: Orchestrates FR-001 → FR-002 → FR-003 → FR-004 → FR-007 → FR-005
-  or FR-006 → FR-008 → `Workspace(monorepo_root=<root>, roots_file=roots_file)`
-  → `workspace.load()`.
+- Description: The `attrs.mlody` validation function `_validate_attr_value()` is
+  extended with a new branch for `type_ref == "representation_ref"`. It accepts
+  a struct with `kind="representation"` or `None`; rejects anything else.
+- Inputs: Any Starlark value passed as `representation=...` in a `value()` call.
+- Processing: Check `type(value) == "struct"` and
+  `python.getattr(value, "kind", None) == "representation"`. If not, raise
+  `TypeError` with a message naming expected kind `"representation"` and the
+  actual value.
 - Business Rules:
-  - Must not modify the `Workspace` class.
-  - Must call `workspace.load()` before returning so the caller receives a
-    ready-to-use instance.
-  - All error conditions must either raise typed exceptions or call
-    `sys.exit(1)` with a clear stderr message; the function must never return a
-    partially-initialised `Workspace`.
-  - When the cwd path is taken (no committoid), `monorepo_root` is passed
-    directly to `Workspace` as today.
+  - `None` is the implicit default (representation is optional); the attr
+    definition uses `mandatory=False, default=None`.
+  - A string name (lazy reference) is NOT supported in this phase — unlike
+    `type_ref` and `location_ref`. Representation must be an inline struct.
+  - This constraint may be relaxed in a future phase when named representations
+    become useful.
 - Priority: Must Have
-- Dependencies: FR-001 through FR-008.
+- Dependencies: None (pure Starlark validation).
 
-### 6.6 CLI Integration
+### 6.4 `representation` Attribute on `value()`
 
-**FR-010: `show` command uses `resolve_workspace()`**
+**FR-004: Add `representation` to the `value()` rule**
 
-- Description: The `show` command replaces the direct `Workspace` construction
-  in `mlody/cli/main.py` with a call to `resolve_workspace()`.
+- Description: The `value()` rule in `values.mlody` gains a `representation`
+  attribute with `type="representation_ref"` and `mandatory=False`.
+- Processing in `_value_impl`:
+  - Read `ctx.attr.representation` (may be `None`).
+  - No resolution step needed (unlike `location` which calls
+    `_resolve_location_ref`): representation structs are already fully formed
+    inline.
+  - Store directly on the output `value_struct`:
+    `representation=ctx.attr.representation`.
 - Business Rules:
-  - The `--roots` global option must continue to work; it is passed through to
-    `Workspace` unchanged.
-  - When multiple targets are passed to a single `mlody show` invocation and
-    they carry different committoids, the behaviour is [TBD — error for now].
-  - Verbose logging (`--verbose`) should emit the resolved SHA when a committoid
-    path is taken, so users can confirm which commit was used.
+  - When `representation` is omitted, the field is present on the struct with
+    value `None`.
+  - When a struct is passed, it must already have passed `_validate_attr_value`
+    with `type_ref="representation_ref"` before `_value_impl` is called
+    (enforced by `rule.mlody`'s `_validate_args`).
 - Priority: Must Have
-- Dependencies: FR-009.
+- Dependencies: FR-001, FR-002, FR-003.
+
+### 6.5 Propagation Through Task/Action Port Unification
+
+**FR-005: `representation` survives `_merge_value_structs`**
+
+- Description: The `_merge_value_structs` function in `task.mlody` merges
+  task-level and action-level value structs by union-ing their fields. The
+  `representation` field must be included in this merge with the same semantics
+  as `type` and `location`: if both task and action specify `representation`,
+  they must be equal; if only one specifies it, the other's `None` is overridden
+  by the present value.
+- Business Rules:
+  - A conflict (`representation` set to different non-`None` structs on task vs.
+    action) must raise a `ValueError` naming the conflicting field.
+  - `_field_values_compatible` may need to recognise `"representation"` as a
+    field that requires structural equality (same `kind` and `name`), analogous
+    to how `"type"` and `"location"` are handled.
+- Priority: Must Have
+- Dependencies: FR-004.
+
+### 6.6 Scoped Value Registration
+
+**FR-006: `representation` on task-scoped values**
+
+- Description: The `_register_scoped_value` helper inside `_task_impl` builds a
+  `Struct(kind="value", ...)` for each port. This helper must include
+  `representation` when constructing the scoped struct.
+- Business Rules:
+  - Copy `representation` from the source value struct (may be `None`).
+  - Consistent with how `type`, `location`, and `source` are propagated.
+- Priority: Must Have
+- Dependencies: FR-004, FR-005.
 
 ---
 
@@ -438,58 +351,52 @@ a foundation for the future mixed-version graph caching use case.
 
 ### 7.1 Performance Requirements
 
-- **NFR-001:** Cache hit path (workspace directory already exists and is valid):
-  `mlody show` must add no more than 200 ms of overhead compared to today's cwd
-  path (no clone, no network call beyond the `git ls-remote` resolution step).
-- **NFR-002:** `git ls-remote` latency is bounded by network conditions to
-  `origin`; no artificial timeout is imposed beyond the git default.
+- **NFR-001:** Adding a `representation` attribute to `value()` must not
+  measurably increase workspace load time. Struct construction and validation
+  are O(1) operations.
 
 ### 7.2 Scalability Requirements
 
-- **NFR-003:** The cache has no enforced size limit in this version. Each cached
-  workspace is a shallow clone, expected to be tens to hundreds of megabytes for
-  this monorepo.
+- **NFR-002:** The representation registry follows the same internal storage as
+  all other kinds; no special scaling consideration applies.
 
 ### 7.3 Availability & Reliability
 
-- **NFR-004:** On a cache hit, the feature must not make any network calls
-  beyond `git ls-remote` resolution. Cloning must not be re-attempted.
-- **NFR-005:** A failed materialisation must not leave a corrupt entry in the
-  cache. Partial directories and lock files must be cleaned up on failure via
-  `finally` blocks.
+- **NFR-003:** The feature is purely additive. Files that omit `representation`
+  must load identically to today. No existing test may regress.
 
 ### 7.4 Security Requirements
 
-- **NFR-006:** No credentials are stored by mlody. Authentication relies
-  entirely on the ambient git credential store and `gh` authentication.
-- **NFR-007:** The cache directory (`~/.cache/mlody/`) is created with user-only
-  permissions (mode `0700`) if it does not already exist.
-- **NFR-008:** Committoid inputs are passed to `git` as arguments, never
-  interpolated into shell strings, to prevent injection.
+- **NFR-004:** No security considerations beyond those already applying to the
+  `.mlody` sandbox (no file I/O, no network calls).
 
 ### 7.5 Usability Requirements
 
-- **NFR-009:** All error messages must identify: what was attempted, what went
-  wrong, and (where applicable) how to recover.
-- **NFR-010:** The resolved SHA is emitted to the verbose log (`--verbose`) so
-  users can confirm which commit was actually used. Exact UX for non-verbose
-  surfacing is deferred pending design of the attributes system.
+- **NFR-005:** A `TypeError` for a wrong `representation` value must name the
+  expected kind (`"representation"`), the actual kind received, and the
+  attribute name.
+- **NFR-006:** `json` must be available in `.mlody` files without an explicit
+  `load()` — injected into the sandbox, consistent with `posix`, `s3`, etc.
 
 ### 7.6 Maintainability Requirements
 
-- **NFR-011:** Resolution and materialisation logic must be isolated from the
-  `Workspace` class and independently testable via `resolve_workspace()`.
-- **NFR-012:** All new modules must have corresponding `_test.py` files
-  covering: label parsing, committoid resolution (local hit, remote hit, unknown
-  ref, ambiguous SHA), cache hit/miss branching, lock contention, metadata
-  writing, and each error condition.
+- **NFR-007:** `representation.mlody` must follow the same structure as
+  `locations.mlody`: a `rule`-based implementation, a `rule()` call to define
+  the `representation` rule, followed by concrete representation declarations.
+- **NFR-008:** All new code paths must be covered by tests in
+  `mlody/common/values_test.py` (or a new `representation_test.py`): struct
+  field present with `json()`, field `None` when omitted, `TypeError` on wrong
+  kind, propagation through task port unification.
 
 ### 7.7 Compatibility Requirements
 
-- **NFR-013:** Existing behaviour for labels starting with `@` or `//` must be
-  byte-for-byte identical to today — no regressions in existing tests.
-- **NFR-014:** The feature must work when cwd is a git worktree rather than the
-  main clone.
+- **NFR-009:** The `representation` field must be present on all `value` structs
+  after this change (defaulting to `None`), so that downstream code can always
+  read `python.getattr(v, "representation", None)` without branching on struct
+  age.
+- **NFR-010:** The `repr` helper in `types.mlody` (used for typedef
+  `representations=[repr(...)]`) is unrelated to this feature and must not be
+  renamed or altered.
 
 ---
 
@@ -497,102 +404,96 @@ a foundation for the future mixed-version graph caching use case.
 
 ### 8.1 Data Entities
 
-- **Cached workspace:** Directory `~/.cache/mlody/workspaces/<SHA>/` containing
-  a shallow clone of the monorepo at the given commit.
-- **Workspace metadata:** JSON file `~/.cache/mlody/workspaces/<SHA>-meta.json`
-  recording provenance of the cached workspace.
-- **Lock file:** Temporary file `~/.cache/mlody/workspaces/<SHA>.lock`, present
-  only during active materialisation.
+- **Representation struct:** An immutable Starlark struct with at minimum
+  `kind="representation"` and `name` (e.g. `"json"`). Additional fields may be
+  added in future phases (e.g. `schema`).
+- **Value struct (updated):** Gains a `representation` field (a representation
+  struct or `None`).
 
 ### 8.2 Data Quality Requirements
 
-- A workspace directory is considered valid only if `mlody/roots.mlody` exists
-  inside it (sentinel check). Any directory failing this check is treated as
-  corrupt; the user is instructed to delete it manually.
+- A representation struct must have `kind="representation"` — validated by
+  `_validate_attr_value` before it reaches `_value_impl`.
+- The `name` field on a representation struct must be a non-empty string.
 
 ### 8.3 Data Retention & Archival
 
-- No automated retention policy in this version. Cache entries persist until
-  manually deleted. Cache cleanup is deferred to a future feature.
+- Not applicable. Representation structs are in-memory Starlark values for the
+  lifetime of a workspace evaluation.
 
 ### 8.4 Data Privacy & Compliance
 
-- Cached workspaces contain monorepo source code and must reside in the user's
-  home directory under a user-only-readable path, not in shared or
-  world-readable locations.
+- No data privacy implications. Representation metadata is structural/schema
+  information, not user data.
 
 ---
 
 ## 9. Integration Requirements
 
-### 9.1 External Systems
+### 9.1 Internal Module Integration
 
-| System          | Purpose                                                      | Auth           | Error handling                        |
-| --------------- | ------------------------------------------------------------ | -------------- | ------------------------------------- |
-| `git` CLI       | Ref resolution (`ls-remote`), cloning, local existence check | Ambient creds  | Propagate stderr; exit 1              |
-| `origin` remote | Remote ref resolution and clone source                       | git creds / gh | Network error → clear message, exit 1 |
+| Module                              | Change required                                                                          |
+| ----------------------------------- | ---------------------------------------------------------------------------------------- |
+| `mlody/common/representation.mlody` | New file: declares `representation` rule and `json` built-in                             |
+| `mlody/common/attrs.mlody`          | Add `"representation_ref"` branch in `_validate_attr_value()`                            |
+| `mlody/common/values.mlody`         | Add `representation` attr on `value()` rule; propagate in impl                           |
+| `mlody/common/task.mlody`           | Extend `_merge_value_structs` and `_register_scoped_value` for `representation`          |
+| Evaluator sandbox setup             | Load `representation.mlody` during sandbox initialisation (same as other standard files) |
 
 ### 9.2 API Requirements
 
-- No HTTP APIs are called directly. All remote operations go through the `git`
-  CLI using ambient credentials.
+- No HTTP APIs. All changes are internal to the `.mlody` DSL evaluation path.
 
 ---
 
 ## 10. User Interface Requirements
 
-### 10.1 CLI Syntax
+### 10.1 DSL Syntax
 
-Extended label syntax for the `show` command:
+The `representation` keyword argument is available on `value()` in all usage
+sites:
 
+```starlark
+# Top-level value declaration
+value(
+    name           = "model_info",
+    type           = top(),
+    representation = json(),
+    location       = posix(path="model_info.json"),
+)
+
+# Inside typedef fields (record type)
+typedef(
+    name = "yolo26",
+    base = record(fields=[
+        value(name="model_info", type=top(), representation=json(), location=posix(path="model_info.json")),
+    ]),
+)
+
+# Inside task/action ports
+action(
+    name    = "downloader-action",
+    outputs = [
+        value(name="model", type=":hf-model", representation=json(), location=posix(path="...")),
+    ],
+    ...
+)
 ```
-mlody show [OPTIONS] TARGETS...
-```
-
-Where each `TARGET` follows one of these forms:
-
-| Form                            | Meaning                                     |
-| ------------------------------- | ------------------------------------------- |
-| `@ROOT//pkg:name`               | Current cwd workspace (unchanged behaviour) |
-| `//pkg:name`                    | Current cwd workspace (unchanged behaviour) |
-| `<committoid>\|@ROOT//pkg:name` | Workspace at resolved committoid            |
-| `<committoid>\|//pkg:name`      | Workspace at resolved committoid            |
-
-Valid committoid examples: `main`, `v1.2.0`, `abc1234`, `a1b2c3d4e5f6...` (full
-SHA).
 
 ### 10.2 Error Message Standards
 
-All error messages emitted to stderr follow the pattern:
+Error messages follow the existing pattern in the codebase:
 
 ```
-Error: <what failed>. <reason>. <remediation if applicable>.
-```
-
-Examples:
-
-```
-Error: Cannot resolve ref 'mian'. No matching branch or tag found on origin.
-
-Error: Ambiguous short SHA 'abc12'. Multiple commits match on origin.
-       Provide a longer SHA prefix or the full 40-character SHA.
-
-Error: Cache lock busy for SHA abc123...
-       Another mlody process may be materialising this workspace.
-       Delete ~/.cache/mlody/workspaces/abc123....lock if the process has exited.
-
-Error: Corrupt workspace cache for SHA abc123...
-       Expected mlody/roots.mlody not found inside the workspace directory.
-       Delete ~/.cache/mlody/workspaces/abc123.../ and retry.
+Attribute 'representation' expects a representation struct (kind='representation'),
+got a location struct (kind='location')
 ```
 
 ---
 
 ## 11. Reporting & Analytics Requirements
 
-Not applicable for this feature. The resolved SHA is surfaced via `--verbose`
-logging. Detailed UX for inspecting workspace provenance is deferred pending
-design of the attributes system.
+Not applicable for this feature.
 
 ---
 
@@ -600,14 +501,11 @@ design of the attributes system.
 
 ### 12.1 Authentication & Authorization
 
-- mlody delegates all authentication to the `git` CLI credential store. No token
-  management is introduced.
+- Not applicable. No network or file-system access introduced.
 
 ### 12.2 Data Security
 
-- Cache directory created with mode `0700`.
-- No credentials written to disk by mlody.
-- Committoid inputs passed as git arguments, not shell-interpolated.
+- Representation structs contain only schema/format metadata. No sensitive data.
 
 ### 12.3 Compliance
 
@@ -617,27 +515,25 @@ design of the attributes system.
 
 ## 13. Infrastructure & Deployment Requirements
 
-### 13.1 Cache Directory Layout
+### 13.1 File Layout
 
 ```
-~/.cache/mlody/
-└── workspaces/
-    ├── <full-sha>/               # shallow clone of monorepo at that SHA
-    ├── <full-sha>-meta.json      # provenance metadata (written after clone)
-    ├── <full-sha>.lock           # present only during active materialisation
-    └── ...
+mlody/common/
+├── representation.mlody      # NEW: declares representation rule and json()
+├── values.mlody              # MODIFIED: add representation attr
+├── attrs.mlody               # MODIFIED: add "representation_ref" type
+└── task.mlody                # MODIFIED: propagate representation in merge/scoping
 ```
 
 ### 13.2 Deployment
 
 - No new binaries or services. The feature is a library addition within the
-  existing `mlody` Python package, surfaced through the existing CLI entry
-  point.
+  existing `mlody` Python package, surfaced through the existing evaluator.
 
 ### 13.3 Disaster Recovery
 
-- If the cache is lost or corrupted, the next invocation re-materialises from
-  `origin`. No persistent user state is lost.
+- Not applicable. All changes are to in-memory evaluation logic; no persistent
+  state is introduced.
 
 ---
 
@@ -645,30 +541,25 @@ design of the attributes system.
 
 ### 14.1 Testing Scope
 
-| Test type                   | Coverage                                                                                  |
-| --------------------------- | ----------------------------------------------------------------------------------------- |
-| Unit: label parser          | All valid forms, missing `\|`, invalid inner label, empty input                           |
-| Unit: committoid resolver   | Branch hit, tag hit, annotated tag deref, unknown ref, ambiguous short SHA, network error |
-| Unit: local existence check | Commit present, commit absent, fallback to remote clone                                   |
-| Unit: cache detection       | Hit with valid sentinel, miss, corrupt entry (dir exists, sentinel absent)                |
-| Unit: lock logic            | Successful acquire, contention → immediate error, cleanup in finally                      |
-| Unit: metadata writer       | Schema correctness, no-overwrite on existing file                                         |
-| Integration                 | End-to-end `mlody show <branch>\|<label>` against a local fixture repo                    |
-| Regression                  | All existing `show` and `shell` tests pass unchanged                                      |
+| Test type                       | Coverage                                                                          |
+| ------------------------------- | --------------------------------------------------------------------------------- |
+| Unit: `representation.mlody`    | `json()` returns struct with `kind="representation"`, `name="json"`               |
+| Unit: `_validate_attr_value`    | `"representation_ref"` accepts representation struct; rejects wrong kinds         |
+| Unit: `value()` rule            | Struct has `representation` field when supplied; `None` when omitted              |
+| Unit: port unification          | `representation` propagates through `_merge_value_structs`; conflict raises error |
+| Unit: scoped value registration | Task-scoped values carry `representation` from source port                        |
+| Integration: workspace load     | `.mlody` file with `representation=json()` loads and resolves correctly           |
+| Regression                      | All existing `//mlody/...` tests pass unchanged                                   |
 
 ### 14.2 Acceptance Criteria
 
-- All unit tests pass under `bazel test //mlody/...`.
-- `mlody show @lexica//models:bert` (cwd form) is behaviourally identical to
-  today's behaviour, verified by existing tests.
-- `mlody show main|@lexica//models:bert` resolves and displays the correct value
-  against a test fixture commit.
-- A repeated invocation of the above produces no `git clone` subprocess (cache
-  hit).
-- An ambiguous short SHA input exits 1 with an "ambiguous" error message.
-- An unknown ref input exits 1 with an "unknown ref" error message.
-- A pre-placed lock file causes an immediate exit 1 with a message naming the
-  lock file path.
+- `ws.resolve(":model_info").representation.name == "json"` for a value declared
+  with `representation=json()`.
+- `ws.resolve(":model_info").representation` is `None` for a value without
+  `representation`.
+- Passing a `location` struct as `representation` raises `TypeError`.
+- All existing tests under `bazel test //mlody/...` pass without modification.
+- Lint passes: `bazel build --config=lint //mlody/...`.
 
 ---
 
@@ -676,64 +567,60 @@ design of the attributes system.
 
 ### 15.1 User Documentation
 
-- Update `mlody show --help` to document the extended label syntax with
-  examples.
-- Add a note to `mlody shell --help` that workspace resolution applies via the
-  `show` subcommand.
+- A brief note in `mlody/common/representation.mlody` module docstring
+  explaining the purpose of representations and the `json()` built-in.
+- Inline comment in `values.mlody` explaining the `representation` attribute.
 
 ### 15.2 Technical Documentation
 
-- Module-level docstring in the new resolver module describing the resolution
-  algorithm, the two-step (remote-resolve then local-check) approach, and the
-  cache layout.
-- Docstrings on `resolve_workspace()` and all supporting public functions.
+- Docstring on `_representation_impl` describing the struct shape and registry
+  kind.
+- Comment in `_validate_attr_value` for the `"representation_ref"` branch.
 
 ---
 
 ## 16. Risks & Mitigation Strategies
 
-| Risk ID | Description                                                     | Impact | Probability | Mitigation                                                          | Owner |
-| ------- | --------------------------------------------------------------- | ------ | ----------- | ------------------------------------------------------------------- | ----- |
-| R-001   | Stale lock file from a crashed process blocks future runs       | High   | Low         | Error message names the lock path; user can delete manually         | Dev   |
-| R-002   | Shallow clone missing objects needed by Bazel rules at that SHA | Medium | Low         | Document limitation; deepen clone on demand in a future phase       | Dev   |
-| R-003   | `git ls-remote` slow on large repos or slow networks            | Low    | Medium      | Acceptable for experimental use; optimise in a future phase         | Dev   |
-| R-004   | cwd is a git worktree; `git clone --local` behaves differently  | Medium | Medium      | Explicitly test against worktree cwd; adjust clone source as needed | Dev   |
-| R-005   | Cache grows unboundedly in long-running dev environments        | Medium | Medium      | Accepted for now; cleanup deferred to a future feature              | Dev   |
-| R-006   | Both a branch and a tag share the same name, causing ambiguity  | Low    | Low         | Document preference order (branch > tag); expose in error message   | Dev   |
+| Risk ID | Description                                                                                                                                | Impact | Probability            | Mitigation                                                                                                                                                 | Owner |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------ | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| R-001   | `repr` name collision: `types.mlody` exports `repr()` for typedef representations; `json` for value representations is a different concept | Medium | Low                    | Keep names distinct; never rename `repr` in `types.mlody`; document the distinction clearly                                                                | Dev   |
+| R-002   | `_merge_value_structs` in `task.mlody` filters by known fields and silently drops `representation`                                         | Medium | Medium                 | Audit the merge logic; add `representation` to the explicitly propagated field set                                                                         | Dev   |
+| R-003   | Sandbox injection order: `representation.mlody` must be loaded before `values.mlody` uses `json`                                           | Low    | Low                    | Enforce load order in sandbox setup; add an integration test that catches missing `json`                                                                   | Dev   |
+| R-004   | Future `json(schema=...)` breaks the bare-struct approach                                                                                  | Low    | Medium                 | Design `json` as a zero-arg callable (factory returning the same struct) rather than a plain struct, so future args can be added without a breaking change | Dev   |
+| R-005   | `default` field on `value()` is any Starlark value with no type checking                                                                   | Low    | High (already present) | Flagged as future concern; no change required in this phase — see OQ-1                                                                                     | Dev   |
 
 ---
 
 ## 17. Dependencies
 
-| Dependency                           | Type     | Status  | Impact if Delayed                      | Owner   |
-| ------------------------------------ | -------- | ------- | -------------------------------------- | ------- |
-| `git` CLI on PATH                    | External | Met     | Blocks all resolution and clone logic  | Env     |
-| `gh` CLI (ambient auth)              | External | Met     | Blocks private repo access             | Env     |
-| Existing `Workspace` class           | Internal | Stable  | Factory wraps it; no changes required  | Dev     |
-| `mlody/roots.mlody` at target commit | Content  | Unknown | Sentinel check and workspace load fail | Authors |
+| Dependency                             | Type     | Status | Impact if Delayed                                  | Owner |
+| -------------------------------------- | -------- | ------ | -------------------------------------------------- | ----- |
+| Evaluator registry (existing)          | Internal | Stable | Blocking; representation registration relies on it | Dev   |
+| `attrs.mlody` `_validate_attr_value()` | Internal | Stable | Blocking; `"representation_ref"` branch needed     | Dev   |
+| `rule.mlody` `_validate_args()`        | Internal | Stable | Attr validation runs before impl is called         | Dev   |
+| `values.mlody` `value()` rule          | Internal | Stable | Core change target                                 | Dev   |
+| `task.mlody` port merge logic          | Internal | Stable | Representation propagation depends on this         | Dev   |
 
 ---
 
 ## 18. Open Questions & Action Items
 
-| ID   | Question / Action                                                                                       | Owner | Target Date | Status   |
-| ---- | ------------------------------------------------------------------------------------------------------- | ----- | ----------- | -------- |
-| OQ-1 | Mixing committoid-qualified and cwd-relative targets in one `show` invocation — parse error or allowed? | Dev   | TBD         | Open     |
-| OQ-2 | When branch and tag share the same name: prefer branch, or error?                                       | Dev   | TBD         | Open     |
-| OQ-3 | Exact `git` invocation for local SHA checkout (SHA not always valid as `--branch` argument)             | Dev   | TBD         | Open     |
-| OQ-4 | Should resolved SHA be printed to stdout as a comment, or only to `--verbose` log?                      | UX    | TBD         | Open     |
-| OQ-5 | Future: support for remotes other than `origin`                                                         | Dev   | Future      | Deferred |
-| OQ-6 | Future: cache cleanup / eviction policy                                                                 | Dev   | Future      | Deferred |
-| OQ-7 | Future: mixed-version graphs (different committoid per node in one evaluation)                          | Arch  | Future      | Deferred |
-| OQ-8 | Future: container image build integration — exact interface to workspace cache                          | Arch  | Future      | Deferred |
+| ID   | Question / Action                                                                                                                                                                                        | Owner | Target Date | Status   |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | ----------- | -------- |
+| OQ-1 | `default` field on `value()` is currently any Starlark value with no type checking — should it be validated against the declared `type`? Flag as a future concern; no change required in this phase.     | Dev   | Future      | Deferred |
+| OQ-2 | Should `json` be a bare struct (reference, no parens) or a zero-arg callable (factory, with parens)? Current downloader uses `json()` with parens — factory approach preferred for future extensibility. | Dev   | Phase 1     | Open     |
+| OQ-3 | Should string names (e.g. `representation="json"`) be supported as lazy references, analogous to `type_ref` and `location_ref`? Not needed for this phase but may be useful for readability.             | Dev   | Future      | Deferred |
+| OQ-4 | When will `json(schema=...)` be introduced? Schema specification for JSON representation is explicitly deferred.                                                                                         | Arch  | Future      | Deferred |
+| OQ-5 | Should `representation.mlody` be auto-loaded as part of the standard sandbox (like `attrs.mlody`) or explicitly `load()`-ed by `values.mlody`?                                                           | Dev   | Phase 1     | Open     |
+| OQ-6 | Should the `representation` field participate in the `_validate_required_value_fields` check in `task.mlody`? (Currently only `type` and `location` are required.)                                       | Dev   | Phase 1     | Open     |
 
 ---
 
 ## 19. Revision History
 
-| Version | Date       | Author                  | Changes       |
-| ------- | ---------- | ----------------------- | ------------- |
-| 1.0     | 2026-03-07 | Requirements Analyst AI | Initial draft |
+| Version | Date       | Author                  | Changes                                                     |
+| ------- | ---------- | ----------------------- | ----------------------------------------------------------- |
+| 1.0     | 2026-04-07 | Requirements Analyst AI | Initial draft for value representation feature (issue #460) |
 
 ---
 
@@ -741,69 +628,54 @@ design of the attributes system.
 
 ### Appendix A: Glossary
 
-| Term            | Definition                                                                               |
-| --------------- | ---------------------------------------------------------------------------------------- |
-| Committoid      | A user-supplied string identifying a commit: full or short SHA, branch name, or tag name |
-| Workspace       | An instance of `mlody.core.workspace.Workspace` built from a specific source tree root   |
-| Cache hit       | The workspace directory for a given SHA exists and passes the sentinel check             |
-| Sentinel file   | `mlody/roots.mlody` — its presence in a cached workspace indicates a complete checkout   |
-| Inner label     | The `@`- or `//`-prefixed target address that follows the `\|` delimiter                 |
-| Lock file       | `<SHA>.lock` in the cache directory, used to serialise materialisation                   |
-| Materialisation | The process of cloning a source tree into the cache directory for a given SHA            |
+| Term                 | Definition                                                                                                                              |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Representation       | A DSL struct (kind="representation") describing the serialisation format of a value's data (e.g. JSON)                                  |
+| `json()`             | The first concrete representation; a bare marker with no arguments in this phase; schema deferred                                       |
+| `representation_ref` | An attr-type that accepts a representation struct or `None`                                                                             |
+| Value struct         | A Starlark struct with `kind="value"` produced by the `value()` rule                                                                    |
+| Port unification     | The `_merge_value_structs` / `_unify_ports` logic in `task.mlody` that merges task-level and action-level value declarations            |
+| `repr` (types.mlody) | An unrelated concept: a descriptor for alternate input representations of a typedef (coercion). Not the same as a value representation. |
 
-### Appendix B: Resolution Algorithm
+### Appendix B: Struct Shapes
+
+**Representation struct (after this change):**
 
 ```
-parse_label(raw):
-  if raw starts with '@' or '//':
-    return (committoid=None, inner_label=raw)       # cwd path
-  split on first '|' → (committoid_part, inner_label)
-  if inner_label does not start with '@' or '//': error
-  return (committoid_part, inner_label)
-
-resolve_sha(committoid):
-  # Always go to the remote for canonical resolution and ambiguity detection
-  results = git ls-remote origin <committoid>
-  if len(results) == 0: error("unknown ref: <committoid>")
-  if len(distinct SHAs in results) > 1: error("ambiguous ref: <committoid>")
-  full_sha = single resolved SHA (dereference annotated tags via ^{})
-  return full_sha
-
-choose_clone_strategy(full_sha, monorepo_root):
-  # Local check is a clone-strategy hint only, not a resolution step
-  if git cat-file -t <full_sha> in monorepo_root == 'commit':
-    return LOCAL
-  return REMOTE
-
-materialise(full_sha, monorepo_root, strategy):
-  if cache_hit(full_sha): return cache_dir(full_sha)   # no clone needed
-  acquire lock(full_sha) or error immediately
-  try:
-    if strategy == LOCAL:
-      git clone --local --depth 1 file:///monorepo_root → cache_dir(full_sha)
-    else:
-      git clone --depth 1 origin → cache_dir(full_sha); checkout full_sha
-    write_meta(full_sha)
-  finally:
-    release lock(full_sha)
-  return cache_dir(full_sha)
+Struct(
+    kind           = "representation",   # always "representation"
+    name           = "json",             # or future formats
+    # schema field: TBD for a later phase
+)
 ```
 
-### Appendix C: Metadata Schema
+**Value struct (after this change):**
 
-```json
-{
-  "$schema": "http://json-schema.org/draft-07/schema",
-  "type": "object",
-  "required": ["requested_ref", "resolved_sha", "resolved_at", "repo"],
-  "properties": {
-    "requested_ref": { "type": "string" },
-    "resolved_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-    "resolved_at": { "type": "string", "format": "date-time" },
-    "repo": { "type": "string" }
-  }
-}
 ```
+Struct(
+    kind           = "value",
+    name           = <string>,
+    type           = <type struct | None>,
+    location       = <location struct | None>,
+    representation = <representation struct | None>,   # NEW
+    default        = <any | None>,
+    source         = <string | None>,
+    _lineage       = [],
+)
+```
+
+### Appendix C: Prior Art — Location Pattern
+
+The `representation` feature mirrors the `location` pattern exactly:
+
+| Aspect           | `location`                         | `representation`                                    |
+| ---------------- | ---------------------------------- | --------------------------------------------------- |
+| Registry kind    | `"location"`                       | `"representation"`                                  |
+| Attr-type string | `"location_ref"`                   | `"representation_ref"`                              |
+| Standard file    | `mlody/common/locations.mlody`     | `mlody/common/representation.mlody`                 |
+| Injected symbols | `posix`, `s3`, `git_repository`, … | `json` (others deferred)                            |
+| Validation       | `_resolve_location_ref()`          | Inline in `_value_impl` (no resolution step needed) |
+| Field on value() | `location=`                        | `representation=`                                   |
 
 ---
 

@@ -17,6 +17,7 @@ import click
 import networkx
 from rich.console import Console
 from rich.pretty import pretty_repr
+from rich.syntax import Syntax
 from rich.table import Table
 
 from mlody.cli.main import cli
@@ -156,6 +157,57 @@ def _format_value(value: object) -> str:
     if _is_primitive(value):
         return str(value)
     return pretty_repr(value)
+
+
+def _pretty_struct_str(obj: object, _depth: int = 0) -> str:
+    """Recursively format a Starlark struct into an indented Python-like string.
+
+    Private fields (starting with ``_``) and callable values (validators etc.)
+    are omitted to keep the output readable.
+    """
+    pad = "    " * _depth
+    inner = "    " * (_depth + 1)
+
+    if hasattr(obj, "as_mapping"):
+        fields = {k: v for k, v in obj.as_mapping().items() if not k.startswith("_")}
+        if not fields:
+            return "struct()"
+        parts = [f"{inner}{k}={_pretty_struct_str(v, _depth + 1)}" for k, v in fields.items()]
+        return "struct(\n" + ",\n".join(parts) + f",\n{pad})"
+
+    if isinstance(obj, list):
+        if not obj:
+            return "[]"
+        parts = [f"{inner}{_pretty_struct_str(v, _depth + 1)}" for v in obj]
+        return "[\n" + ",\n".join(parts) + f",\n{pad}]"
+
+    if isinstance(obj, dict):
+        if not obj:
+            return "{}"
+        parts = [f"{inner}{k!r}: {_pretty_struct_str(v, _depth + 1)}" for k, v in obj.items()]
+        return "{\n" + ",\n".join(parts) + f",\n{pad}}}"
+
+    if callable(obj) and not isinstance(obj, type):
+        return "<callable>"
+
+    return repr(obj)
+
+
+def _print_mlody_value(value: MlodyValue) -> None:
+    """Print a MlodyValue to the console with syntax highlighting."""
+    if isinstance(value, MlodyValueValue):
+        _console.print("value:")
+        _console.print(Syntax(_pretty_struct_str(value.struct), "python", theme="monokai", word_wrap=True))
+        return
+    if isinstance(value, MlodyTaskValue):
+        _console.print("task:")
+        _console.print(Syntax(_pretty_struct_str(value.struct), "python", theme="monokai", word_wrap=True))
+        return
+    if isinstance(value, MlodyActionValue):
+        _console.print("action:")
+        _console.print(Syntax(_pretty_struct_str(value.struct), "python", theme="monokai", word_wrap=True))
+        return
+    click.echo(_render_mlody_value(value))
 
 
 def _render_mlody_value(value: MlodyValue) -> str:
@@ -380,7 +432,7 @@ def show(ctx: click.Context, targets: tuple[str, ...]) -> None:
                     )
 
                 print("-------------------------------")
-                click.echo(_render_mlody_value(mlody_value))
+                _print_mlody_value(mlody_value)
                 print("-------------------------------")
         except WorkspaceLoadError as exc:
             has_error = True

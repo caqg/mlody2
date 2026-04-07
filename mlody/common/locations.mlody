@@ -1,5 +1,5 @@
 load("//mlody/core/rule.mlody", "rule")
-load("//mlody/common/attrs.mlody", "attr", "extend_attrs", "_validate_attr_value")
+load("//mlody/common/attrs.mlody", "attr", "extend_attrs", "validate_attr_value")
 
 
 def _make_location_factory(loc_struct):
@@ -13,7 +13,7 @@ def _make_location_factory(loc_struct):
                     + ". Allowed: " + repr(set(allowed))
                 )
         for k, v in kwargs.items():
-            _validate_attr_value(k, v, allowed[k])
+            validate_attr_value(k, v, allowed[k])
 
         if not kwargs:
             return loc_struct

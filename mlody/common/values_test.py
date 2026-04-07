@@ -14,6 +14,7 @@ _RULE_MLODY = (_THIS_DIR.parent / "core" / "rule.mlody").read_text()
 _ATTRS_MLODY = (_THIS_DIR / "attrs.mlody").read_text()
 _TYPES_MLODY = (_THIS_DIR / "types.mlody").read_text()
 _LOCATIONS_MLODY = (_THIS_DIR / "locations.mlody").read_text()
+_REPRESENTATION_MLODY = (_THIS_DIR / "representation.mlody").read_text()
 _VALUES_MLODY = (_THIS_DIR / "values.mlody").read_text()
 
 _BASE_FILES: dict[str, str] = {
@@ -21,6 +22,7 @@ _BASE_FILES: dict[str, str] = {
     "mlody/common/attrs.mlody": _ATTRS_MLODY,
     "mlody/common/types.mlody": _TYPES_MLODY,
     "mlody/common/locations.mlody": _LOCATIONS_MLODY,
+    "mlody/common/representation.mlody": _REPRESENTATION_MLODY,
     "mlody/common/values.mlody": _VALUES_MLODY,
 }
 
@@ -29,6 +31,7 @@ def _eval(extra_mlody: str) -> Evaluator:
     script = (
         'load("//mlody/common/types.mlody")\n'
         'load("//mlody/common/locations.mlody")\n'
+        'load("//mlody/common/representation.mlody")\n'
         'load("//mlody/common/values.mlody")\n'
         + dedent(extra_mlody)
     )
@@ -233,3 +236,42 @@ def test_value_stores_tuple_literal_default() -> None:
     v = ev._values_by_name["v"]
     # Tuples are normalized to list in runtime values.
     assert v.default == [1, 2]
+
+
+# ---------------------------------------------------------------------------
+# TC-013 (5.1): value() with representation=json() carries representation struct
+# ---------------------------------------------------------------------------
+
+
+def test_value_with_representation_json_carries_representation_struct() -> None:
+    """5.1: value(representation=json()) → result.representation.kind == 'representation'
+    and result.representation.name == 'json'.
+    """
+    ev = _eval('value(name="x", type=integer(), location=s3(), representation=json())')
+    v = ev._values_by_name["x"]
+    assert v.representation is not None
+    assert v.representation.kind == "representation"
+    assert v.representation.name == "json"
+
+
+# ---------------------------------------------------------------------------
+# TC-014 (5.2): value() without representation has representation=None
+# ---------------------------------------------------------------------------
+
+
+def test_value_without_representation_has_representation_none() -> None:
+    """5.2: value() without representation attr → result.representation is None."""
+    ev = _eval('value(name="x", type=integer(), location=s3())')
+    v = ev._values_by_name["x"]
+    assert v.representation is None
+
+
+# ---------------------------------------------------------------------------
+# TC-015 (5.3): value() with wrong-kind representation raises TypeError
+# ---------------------------------------------------------------------------
+
+
+def test_value_with_wrong_kind_representation_raises_type_error() -> None:
+    """5.3: value(representation=posix()) raises TypeError naming kind 'representation'."""
+    with pytest.raises(TypeError, match="representation"):
+        _eval('value(name="x", type=integer(), location=s3(), representation=posix())')

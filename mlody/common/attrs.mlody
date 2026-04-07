@@ -22,7 +22,7 @@ def field(*, name, type, mandatory=True):
     return Struct(kind="field", name=name, type=type, mandatory=mandatory)
 
 
-def _validate_attr_value(attr_name: str, value: python.Any, type_ref: python.Any) -> None:
+def validate_attr_value(attr_name: str, value: python.Any, type_ref: python.Any) -> None:
     if isinstance(type_ref, str):
         # String name: primitive check or registry lookup
         if type_ref == "type":
@@ -55,6 +55,18 @@ def _validate_attr_value(attr_name: str, value: python.Any, type_ref: python.Any
                 raise TypeError(
                     f"Attribute {attr_name!r} expects a location struct or string name, "
                     f"got {type(value)!r}"
+                )
+            return
+        if type_ref == "representation_ref":
+            # Accepts None or a representation struct. Strings are rejected —
+            # no lazy string resolution for representations in this phase.
+            if value == None:
+                return
+            if type(value) != "struct" or python.getattr(value, "kind", None) != "representation":
+                got_kind = python.getattr(value, "kind", None) if type(value) == "struct" else type(value)
+                raise TypeError(
+                    f"Attribute {attr_name!r} expects a representation struct (kind='representation'), "
+                    f"got kind={got_kind!r}"
                 )
             return
         if type_ref == "value_ref_list":
@@ -101,10 +113,10 @@ def _validate_attr_value(attr_name: str, value: python.Any, type_ref: python.Any
 
         if type_ref == "field_list":
             if not isinstance(value, list):
-                raise TypeError(f"Attribute {attr_name!r} expects a list of field() specs")
+                raise TypeError(f"Attribute {attr_name!r} expects a list of field() or value() specs")
             for item in value:
-                if type(item) != "struct" or python.getattr(item, "kind", None) != "field":
-                    raise TypeError(f"Attribute {attr_name!r}: each item must be a field() spec")
+                if type(item) != "struct" or python.getattr(item, "kind", None) not in ("field", "value"):
+                    raise TypeError(f"Attribute {attr_name!r}: each item must be a field() or value() spec")
             return
         if type_ref == "repr_list":
             if not isinstance(value, list):
@@ -256,7 +268,7 @@ def _validate_map(attrs: dict[str, python.Any], value: python.Any) -> None:
         # Per-key value types; field.name is a concrete key value of key_type
         strict = attrs.get("strict", False)
         field_by_name = {f.name: f for f in fields}
-        required = {f.name for f in fields if f.mandatory}
+        required = {f.name for f in fields if python.getattr(f, "mandatory", True)}
         actual = set(value.keys())
         missing = required - actual
         if missing:
@@ -437,7 +449,7 @@ def _make_factory(type_struct):
                     + ". Allowed: " + repr(set(allowed))
                 )
         for k, v in kwargs.items():
-            _validate_attr_value(k, v, allowed[k])
+            validate_attr_value(k, v, allowed[k])
 
         for k in mandatory:
             if k not in current_attrs and k not in kwargs:

@@ -5,6 +5,7 @@ exports_files([
     "action.mlody",
     "attrs.mlody",
     "locations.mlody",
+    "representation.mlody",
     "task.mlody",
     "types.mlody",
     "values.mlody",
@@ -77,6 +78,7 @@ o_py_test(
     data = [
         "attrs.mlody",
         "locations.mlody",
+        "representation.mlody",
         "types.mlody",
         "values.mlody",
         "//mlody/core:rule.mlody",
@@ -114,6 +116,7 @@ o_py_test(
         "action.mlody",
         "attrs.mlody",
         "locations.mlody",
+        "representation.mlody",
         "task.mlody",
         "types.mlody",
         "values.mlody",
