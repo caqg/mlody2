@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from pyfakefs.fake_filesystem import FakeFilesystem
 from rich.console import Console
+from starlarkish.core.struct import Struct
 
 from mlody.core.targets import TargetAddress
 from mlody.core.workspace import RootInfo, Workspace, WorkspaceLoadError
@@ -456,3 +457,256 @@ class TestStdoutSafety:
             "workspace.load() must not write to stdout — "
             "stdout is the LSP transport and stray output corrupts the protocol"
         )
+
+
+# ---------------------------------------------------------------------------
+# Port list → named Struct conversion (Phase 3)
+# ---------------------------------------------------------------------------
+
+# Shared .mlody content for port-conversion tests.  Uses Struct() directly
+# so we control the exact shape without depending on the task/action DSL.
+_ROOTS_WITH_BERT = """\
+load("//mlody/core/builtins.mlody", "root")
+root(name="bert", path="//mlody/teams/bert", description="bert team")
+"""
+
+_PORT_BUILTINS = """\
+def root(name, path, description=""):
+    builtins.register("root", struct(
+        name=name,
+        path=path,
+        description=description,
+    ))
+"""
+
+
+def _make_port_project(fs: FakeFilesystem, entity_mlody: str) -> Path:
+    """Create a minimal fake workspace with one entity file under //mlody/teams/bert/."""
+    root = Path("/port_project")
+    fs.create_file(str(root / "mlody/core/builtins.mlody"), contents=_PORT_BUILTINS)
+    fs.create_file(str(root / "mlody/roots.mlody"), contents=_ROOTS_WITH_BERT)
+    fs.create_file(str(root / "mlody/common/types.mlody"), contents=TYPES_MLODY)
+    fs.create_dir(str(root / "mlody/teams/bert"))
+    fs.create_file(str(root / "mlody/teams/bert/entity.mlody"), contents=entity_mlody)
+    return root
+
+
+class TestPortConversion:
+    """Requirement: workspace-port-conversion — port lists become named Structs."""
+
+    # TC-001/002/003 — basic named access, resolve to Struct, deep traversal
+    def test_task_outputs_accessible_by_name_after_load(
+        self, fs: FakeFilesystem
+    ) -> None:
+        # TC-001: outputs list element is accessible as named attribute.
+        # TC-002: outputs field itself is a Struct after load().
+        # TC-003: deep traversal into element sub-field works.
+        entity_mlody = """\
+loc = Struct(kind="location", type="path", name="weights_path", path="/tmp/w")
+weight_val = Struct(kind="value", name="backbone_weights", location=loc)
+builtins.register("task", Struct(
+    kind="task",
+    name="train_bert",
+    inputs=[],
+    outputs=[weight_val],
+    config=[],
+))
+"""
+        root = _make_port_project(fs, entity_mlody)
+        ws = Workspace(monorepo_root=root)
+        ws.load()
+
+        # TC-001: named element is accessible
+        el = ws.resolve("@bert//entity:train_bert.outputs.backbone_weights")
+        assert isinstance(el, Struct)
+        assert getattr(el, "name", None) == "backbone_weights"
+
+        # TC-002: outputs field is a Struct
+        outputs_struct = ws.resolve("@bert//entity:train_bert.outputs")
+        assert isinstance(outputs_struct, Struct)
+        assert isinstance(getattr(outputs_struct, "backbone_weights", None), Struct)
+
+        # TC-003: deep traversal into element sub-field
+        loc_val = ws.resolve("@bert//entity:train_bert.outputs.backbone_weights.location")
+        assert getattr(loc_val, "path", None) == "/tmp/w"
+
+    # TC-004 — inputs and config port fields
+    def test_inputs_and_config_accessible_by_name_after_load(
+        self, fs: FakeFilesystem
+    ) -> None:
+        entity_mlody = """\
+inp = Struct(kind="value", name="raw_data", location=Struct(kind="location", type="path", name="data_loc", path="/data"))
+cfg = Struct(kind="value", name="lr_value", location=Struct(kind="location", type="path", name="lr_loc", path="/cfg"))
+builtins.register("task", Struct(
+    kind="task",
+    name="preprocess",
+    inputs=[inp],
+    outputs=[],
+    config=[cfg],
+))
+"""
+        root = _make_port_project(fs, entity_mlody)
+        ws = Workspace(monorepo_root=root)
+        ws.load()
+
+        # inputs
+        inp_el = ws.resolve("@bert//entity:preprocess.inputs.raw_data")
+        assert isinstance(inp_el, Struct)
+        assert getattr(inp_el, "name", None) == "raw_data"
+        assert isinstance(ws.resolve("@bert//entity:preprocess.inputs"), Struct)
+
+        # config
+        cfg_el = ws.resolve("@bert//entity:preprocess.config.lr_value")
+        assert isinstance(cfg_el, Struct)
+        assert getattr(cfg_el, "name", None) == "lr_value"
+        assert isinstance(ws.resolve("@bert//entity:preprocess.config"), Struct)
+
+    # TC-005 — direct action entity (not embedded in a task)
+    def test_direct_action_outputs_accessible_by_name(
+        self, fs: FakeFilesystem
+    ) -> None:
+        entity_mlody = """\
+w = Struct(kind="value", name="weights", location=Struct(kind="location", type="path", name="w_loc", path="/weights"))
+builtins.register("action", Struct(
+    kind="action",
+    name="train_action",
+    inputs=[],
+    outputs=[w],
+    config=[],
+))
+"""
+        root = _make_port_project(fs, entity_mlody)
+        ws = Workspace(monorepo_root=root)
+        ws.load()
+
+        el = ws.resolve("@bert//entity:train_action.outputs.weights")
+        assert isinstance(el, Struct)
+        assert getattr(el, "name", None) == "weights"
+
+    # TC-006 — embedded action inside a task
+    def test_embedded_action_outputs_accessible_by_name(
+        self, fs: FakeFilesystem
+    ) -> None:
+        entity_mlody = """\
+w = Struct(kind="value", name="weights", location=Struct(kind="location", type="path", name="w_loc", path="/w"))
+emb_action = Struct(kind="action", name="finetune", inputs=[], outputs=[w], config=[])
+builtins.register("task", Struct(
+    kind="task",
+    name="finetune_task",
+    inputs=[],
+    outputs=[],
+    config=[],
+    action=emb_action,
+))
+"""
+        root = _make_port_project(fs, entity_mlody)
+        ws = Workspace(monorepo_root=root)
+        ws.load()
+
+        el = ws.resolve("@bert//entity:finetune_task.action.outputs.weights")
+        assert isinstance(el, Struct)
+        assert getattr(el, "name", None) == "weights"
+
+    # TC-007 — empty list becomes empty Struct
+    def test_empty_port_list_becomes_empty_struct(
+        self, fs: FakeFilesystem
+    ) -> None:
+        entity_mlody = """\
+builtins.register("task", Struct(
+    kind="task",
+    name="empty_ports",
+    inputs=[],
+    outputs=[],
+    config=[],
+))
+"""
+        root = _make_port_project(fs, entity_mlody)
+        ws = Workspace(monorepo_root=root)
+        ws.load()  # must not raise
+
+        config_val = ws.resolve("@bert//entity:empty_ports.config")
+        assert isinstance(config_val, Struct)
+        # An empty Struct has no fields — accessing any field raises AttributeError.
+        with pytest.raises(AttributeError):
+            _ = getattr(config_val, "nonexistent")
+
+    # TC-008 — missing name field raises ValueError
+    def test_element_missing_name_raises_value_error(
+        self, fs: FakeFilesystem
+    ) -> None:
+        entity_mlody = """\
+no_name_el = Struct(kind="value", location=Struct(kind="location", type="path", name="x", path="/x"))
+builtins.register("task", Struct(
+    kind="task",
+    name="bad_task",
+    inputs=[],
+    outputs=[no_name_el],
+    config=[],
+))
+"""
+        root = _make_port_project(fs, entity_mlody)
+        ws = Workspace(monorepo_root=root)
+        with pytest.raises(ValueError, match="bad_task") as exc_info:
+            ws.load()
+        # Error message must mention the field name too
+        assert "outputs" in str(exc_info.value)
+
+    # TC-009 — duplicate names raise ValueError
+    def test_duplicate_element_names_raise_value_error(
+        self, fs: FakeFilesystem
+    ) -> None:
+        entity_mlody = """\
+w1 = Struct(kind="value", name="w", location=Struct(kind="location", type="path", name="l1", path="/1"))
+w2 = Struct(kind="value", name="w", location=Struct(kind="location", type="path", name="l2", path="/2"))
+builtins.register("task", Struct(
+    kind="task",
+    name="dup_task",
+    inputs=[],
+    outputs=[w1, w2],
+    config=[],
+))
+"""
+        root = _make_port_project(fs, entity_mlody)
+        ws = Workspace(monorepo_root=root)
+        with pytest.raises(ValueError, match="dup_task") as exc_info:
+            ws.load()
+        assert "w" in str(exc_info.value)
+
+    # TC-010 — idempotency: calling _convert_single_entity twice is safe
+    def test_convert_single_entity_is_idempotent(self) -> None:
+        w = Struct(kind="value", name="weights", path="/w")
+        entity = Struct(
+            kind="task",
+            name="some_task",
+            inputs=[],
+            outputs=[w],
+            config=[],
+        )
+        first = Workspace._convert_single_entity(entity)
+        second = Workspace._convert_single_entity(first)
+        # No error, and field-by-field equality holds.
+        assert first == second
+        assert isinstance(getattr(first.outputs, "weights", None), Struct)
+
+    # TC-011 — non-port fields are preserved unchanged after conversion
+    def test_non_port_fields_preserved_after_load(
+        self, fs: FakeFilesystem
+    ) -> None:
+        entity_mlody = """\
+builtins.register("task", Struct(
+    kind="task",
+    name="meta_task",
+    inputs=[],
+    outputs=[],
+    config=[],
+    extra_meta="important_value",
+))
+"""
+        root = _make_port_project(fs, entity_mlody)
+        ws = Workspace(monorepo_root=root)
+        ws.load()
+
+        entity = ws.resolve("@bert//entity:meta_task")
+        assert getattr(entity, "kind", None) == "task"
+        assert getattr(entity, "name", None) == "meta_task"
+        assert getattr(entity, "extra_meta", None) == "important_value"

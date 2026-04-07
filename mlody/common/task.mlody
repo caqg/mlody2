@@ -1,5 +1,6 @@
 load("//mlody/core/rule.mlody", "rule")
 load("//mlody/common/attrs.mlody", "attr")
+load("//mlody/common/types.mlody", "typedef")
 
 
 def _validate_value_refs(attr_name, items):
@@ -234,4 +235,8 @@ task = rule(
         "action":  attr(type="action_ref"),
         "config":  attr(type="value_ref_list", mandatory=False),
     },
+)
+
+typedef(
+    name = "mlody-task"
 )

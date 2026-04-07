@@ -107,10 +107,9 @@ def parse_label(label: str) -> tuple[str | None, str]:
     committoid = lbl.workspace  # None = CWD
 
     if lbl.entity is None and lbl.attribute_path is None:
-        raise _LabelParseError(
-            label,
-            "label has no entity spec and no attribute path — cannot resolve to a value",
-        )
+        # Bare workspace label (e.g. "HEAD", "main", "abc123f").
+        # inner_label is empty — callers resolve this to MlodyWorkspaceValue.
+        return (committoid, "")
 
     if lbl.entity is None:
         # Workspace-level attribute access (e.g. "'info", "457f'info").
@@ -128,12 +127,15 @@ def parse_label(label: str) -> tuple[str | None, str]:
     path = lbl.entity.path or ""
     if lbl.entity.wildcard:
         parts.append(f"//{path}/...")
-    else:
+    elif path:
         parts.append(f"//{path}")
+    # else: bare root (@lexica with no path) — no // suffix
     if lbl.entity.name is not None:
         parts.append(f":{lbl.entity.name}")
+        if lbl.entity.field_path:
+            parts.append("." + ".".join(lbl.entity.field_path))
     if lbl.attribute_path:
-        parts.append("." + ".".join(lbl.attribute_path))
+        parts.append("'" + ".".join(lbl.attribute_path))
     inner_label = "".join(parts)
     return (committoid, inner_label)
 

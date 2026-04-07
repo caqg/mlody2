@@ -74,12 +74,10 @@ def parse_target(raw: str) -> TargetAddress:
     if entity.name is None:
         raise ValueError(f"Invalid target syntax: missing ':' separator in {raw!r}")
 
-    # Split entity.name on '.' to recover target_name + field_path.
-    # The core parser stores the full ':suffix' verbatim in entity.name;
-    # TargetAddress splits on '.' to separate target_name from field traversal.
-    name_parts = entity.name.split(".")
-    target_name = name_parts[0]
-    field_path = tuple(name_parts[1:])
+    # The parser now splits entity.name on '.' itself and stores the traversal
+    # segments in entity.field_path — no manual splitting needed here.
+    target_name = entity.name
+    field_path: tuple[str, ...] = entity.field_path or ()
 
     if not target_name:
         raise ValueError(f"Target name is empty in {raw!r}")

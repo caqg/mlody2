@@ -194,10 +194,14 @@ class TestEntitySpecFull:
         assert result.entity.path == "foo/bar"
         assert result.entity.name is None
 
-    def test_at_root_without_double_slash_raises(self) -> None:
-        # Scenario: Missing "//" after "@" raises EntityParseError
-        with pytest.raises(EntityParseError):
-            parse_label("@root-only")
+    def test_at_root_without_double_slash_is_valid(self) -> None:
+        # Scenario: Bare "@root" with no "//" is a valid root-only entity reference
+        result = parse_label("@root-only")
+        assert result.entity is not None
+        assert result.entity.root == "root-only"
+        assert result.entity.path is None
+        assert result.entity.name is None
+        assert result.entity.field_path is None
 
     def test_empty_path_raises(self) -> None:
         # Scenario: Empty path raises EntityParseError
@@ -281,3 +285,44 @@ class TestAttributePath:
         # Scenario: Unclosed attribute query raises AttributeParseError
         with pytest.raises(AttributeParseError):
             parse_label("'info[git:author=mav")
+
+
+class TestEntityFieldPath:
+    """Requirement: Dot-separated suffix after entity name is split into field_path."""
+
+    def test_bare_entity_name_has_no_field_path(self) -> None:
+        # Scenario: :pretrain with no dots → name="pretrain", field_path=None
+        result = parse_label("@lexica//diamond:pretrain")
+        assert result.entity is not None
+        assert result.entity.name == "pretrain"
+        assert result.entity.field_path is None
+
+    def test_dotted_entity_name_splits_into_field_path(self) -> None:
+        # Scenario: :pretrain.outputs.backbone_weights
+        # → name="pretrain", field_path=("outputs", "backbone_weights")
+        result = parse_label("@lexica//diamond:pretrain.outputs.backbone_weights")
+        assert result.entity is not None
+        assert result.entity.name == "pretrain"
+        assert result.entity.field_path == ("outputs", "backbone_weights")
+
+    def test_single_dot_suffix_gives_one_element_field_path(self) -> None:
+        # Scenario: :pretrain.outputs → name="pretrain", field_path=("outputs",)
+        result = parse_label("@lexica//diamond:pretrain.outputs")
+        assert result.entity is not None
+        assert result.entity.name == "pretrain"
+        assert result.entity.field_path == ("outputs",)
+
+    def test_field_path_combined_with_tick_attribute_path(self) -> None:
+        # Scenario: both entity field_path and tick attribute_path coexist
+        result = parse_label("@lexica//diamond:pretrain.outputs'metadata")
+        assert result.entity is not None
+        assert result.entity.name == "pretrain"
+        assert result.entity.field_path == ("outputs",)
+        assert result.attribute_path == ("metadata",)
+
+    def test_no_entity_name_has_no_field_path(self) -> None:
+        # Scenario: entity without colon → name=None, field_path=None
+        result = parse_label("@lexica//diamond")
+        assert result.entity is not None
+        assert result.entity.name is None
+        assert result.entity.field_path is None

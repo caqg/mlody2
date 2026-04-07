@@ -11,6 +11,7 @@ from typing import Any, Callable, cast
 from rich.console import Console
 from rich.syntax import Syntax
 
+from starlarkish.core.struct import Struct
 from starlarkish.evaluator.evaluator import Evaluator
 from mlody.common.context import build_ctx
 from mlody.core.source_parser import extract_entity_ranges
@@ -132,6 +133,91 @@ class Workspace:
             roots=sorted(self._root_infos.keys()),
         )
 
+    @staticmethod
+    def _convert_single_entity(entity: Struct) -> Struct:
+        """Convert ``inputs``, ``outputs``, and ``config`` port lists to named Structs.
+
+        Returns a new ``Struct`` with those three fields replaced by ``Struct``
+        objects keyed by element ``name``.  All other fields are preserved
+        unchanged.
+
+        Idempotent: if a field is already a ``Struct`` it is left as-is.
+        Raises ``ValueError`` if any element lacks a ``name`` or if duplicate
+        names appear within the same list.
+        """
+        # Recursively convert an embedded action Struct before reconstructing
+        # the outer entity, so that task.action.outputs.X traversal works.
+        action_field = getattr(entity, "action", None)
+        if (
+            isinstance(action_field, Struct)
+            and getattr(action_field, "kind", None) == "action"
+        ):
+            action_field = Workspace._convert_single_entity(action_field)
+
+        entity_kind = getattr(entity, "kind", "<unknown>")
+        entity_name = getattr(entity, "name", "<unknown>")
+
+        def _convert_port(field_name: str) -> Struct:
+            lst: object = getattr(entity, field_name, None)
+            # Idempotency: already a Struct — leave it unchanged.
+            if isinstance(lst, Struct):
+                return lst
+            # Treat None or empty list as an empty Struct.
+            if not lst:
+                return Struct()
+            # lst is a non-empty list; validate and build the named Struct.
+            seen: dict[str, int] = {}
+            for idx, el in enumerate(lst):  # type: ignore[union-attr]
+                name = getattr(el, "name", None)
+                if not name:
+                    msg = (
+                        f"Entity {entity_kind!r}/{entity_name!r}: "
+                        f"element at index {idx} of field {field_name!r} "
+                        f"is missing a non-empty 'name' field"
+                    )
+                    raise ValueError(msg)
+                if name in seen:
+                    msg = (
+                        f"Entity {entity_kind!r}/{entity_name!r}: "
+                        f"duplicate name {name!r} in field {field_name!r} "
+                        f"(first at index {seen[name]}, repeated at index {idx})"
+                    )
+                    raise ValueError(msg)
+                seen[name] = idx
+            return Struct(**{el.name: el for el in lst})  # type: ignore[union-attr]
+
+        new_inputs = _convert_port("inputs")
+        new_outputs = _convert_port("outputs")
+        new_config = _convert_port("config")
+
+        updated: dict[str, object] = {
+            **entity._fields,
+            "inputs": new_inputs,
+            "outputs": new_outputs,
+            "config": new_config,
+        }
+        if action_field is not None:
+            updated["action"] = action_field
+        return Struct(**updated)
+
+    def _convert_ports_to_structs(self) -> None:
+        """Replace port lists on every task/action entity in the evaluator registry.
+
+        Iterates ``self._evaluator.all``, converts each ``task`` and ``action``
+        entity via ``_convert_single_entity``, and writes the results back.
+        Updates are staged in a temporary dict to avoid mutating the dict
+        during iteration.
+        """
+        staging: dict[object, Struct] = {}
+        for key, value in self._evaluator.all.items():
+            if not isinstance(value, Struct):
+                continue
+            if getattr(value, "kind", None) not in ("task", "action"):
+                continue
+            staging[key] = self._convert_single_entity(value)
+        for key, new_value in staging.items():
+            self._evaluator.all[key] = new_value  # type: ignore[index]
+
     def _is_skipped_mlody_file(self, mlody_file: Path) -> bool:
         """Return True when a file matches the configured skip patterns.
 
@@ -206,6 +292,10 @@ class Workspace:
             raise WorkspaceLoadError(load_errors)
 
         self._evaluator.resolve()
+
+        # Phase 3: Convert port lists (inputs/outputs/config) on task and action
+        # entities to named Structs, enabling pure getattr-based traversal.
+        self._convert_ports_to_structs()
 
         if verbose:
             data = {str(k): v.to_dict() if hasattr(v, "to_dict") else v for k, v in self._evaluator.all.items()}
@@ -292,7 +382,15 @@ class Workspace:
                     entity = lbl.entity
                     name_parts = entity.name.split(".")
                     base_name = name_parts[0]
-                    field_parts = tuple(name_parts[1:])
+                    # entity.field_path carries dot-segments after the entity
+                    # name (e.g. "outputs.weights" from ":task.outputs.weights").
+                    # The parser stores these in field_path; name_parts[1:] is
+                    # kept as a legacy fallback for labels parsed without the
+                    # core parser's field_path support.
+                    if entity.field_path:
+                        field_parts = entity.field_path
+                    else:
+                        field_parts = tuple(name_parts[1:])
                     if lbl.attribute_path:
                         field_parts = field_parts + lbl.attribute_path
 

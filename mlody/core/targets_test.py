@@ -97,7 +97,8 @@ class TestParseTargetMalformed:
             parse_target("//path/to/target")
 
     def test_bare_root_prefix(self) -> None:
-        with pytest.raises(ValueError, match="'//'"):
+        # @ROOT is a valid label (bare root), but parse_target requires a ":name"
+        with pytest.raises(ValueError, match="missing.*':'"):
             parse_target("@ROOT")
 
 

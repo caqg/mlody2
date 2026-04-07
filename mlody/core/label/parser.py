@@ -7,12 +7,15 @@ ABNF grammar (Appendix C of REQUIREMENTS.md):
     workspace_spec  = workspace_name ["[" query_body "]"]
     workspace_name  = *VCHAR                ; everything before "|" or "[" or "'"
 
-    entity_spec     = ["@" root_name] "//" path_spec [":" entity_name]
+    entity_spec     = ["@" root_name] "//" path_spec [":" entity_field_path]
                       ["[" query_body "]"]
     root_name       = 1*name_char
     path_spec       = path_segments ["/" "..."]
     path_segments   = path_component *("/" path_component)
     path_component  = 1*name_char
+    entity_field_path = entity_name *("." entity_name)
+                      ; first segment is the entity name; subsequent segments
+                      ; are stored in EntitySpec.field_path for struct traversal
     entity_name     = 1*name_char
     name_char       = ALPHA / DIGIT / "-" / "_" / "."
 
@@ -106,16 +109,20 @@ def _parse_entity_fragment(raw: str, fragment: str) -> tuple[EntitySpec, str | N
 
     remainder = body
 
-    # Optional @root prefix in "@root//path" form
+    # Optional @root prefix in "@root//path" or bare "@root" form
     root: str | None = None
     if remainder.startswith("@"):
         at_end = remainder.find("//")
         if at_end == -1:
-            raise EntityParseError(
-                raw,
-                "'@root' must be followed by '//'",
-                entity_fragment=fragment,
-            )
+            # Bare root reference: "@lexica" with no path — valid on its own.
+            root = remainder[1:]
+            if not root:
+                raise EntityParseError(
+                    raw,
+                    "'@' must be followed by a root name",
+                    entity_fragment=fragment,
+                )
+            return EntitySpec(root=root, path=None, wildcard=False, name=None, field_path=None), query
         root = remainder[1:at_end]
         remainder = remainder[at_end:]
 
@@ -137,8 +144,12 @@ def _parse_entity_fragment(raw: str, fragment: str) -> tuple[EntitySpec, str | N
             entity_fragment=fragment,
         )
 
-    # Optional :name suffix (before wildcard check)
+    # Optional :entity_field_path suffix (before wildcard check).
+    # The part after ":" is split on the first "." to separate the entity name
+    # from an optional struct traversal path (e.g. ":pretrain.outputs.weights"
+    # → name="pretrain", field_path=("outputs", "weights")).
     name: str | None = None
+    field_path_tuple: tuple[str, ...] | None = None
     colon_pos = remainder.find(":")
     if colon_pos != -1:
         name_part = remainder[colon_pos + 1 :]
@@ -148,7 +159,13 @@ def _parse_entity_fragment(raw: str, fragment: str) -> tuple[EntitySpec, str | N
                 "entity name after ':' must not be empty",
                 entity_fragment=fragment,
             )
-        name = name_part
+        dot_idx = name_part.find(".")
+        if dot_idx != -1:
+            name = name_part[:dot_idx]
+            field_path_tuple = tuple(name_part[dot_idx + 1 :].split("."))
+        else:
+            name = name_part
+            field_path_tuple = None
         remainder = remainder[:colon_pos]
 
     # Wildcard check: path ends with /... or is just ...
@@ -169,7 +186,10 @@ def _parse_entity_fragment(raw: str, fragment: str) -> tuple[EntitySpec, str | N
             entity_fragment=fragment,
         )
 
-    return EntitySpec(root=root, path=path, wildcard=wildcard, name=name), query
+    return (
+        EntitySpec(root=root, path=path, wildcard=wildcard, name=name, field_path=field_path_tuple),
+        query,
+    )
 
 
 def _parse_attribute_fragment(

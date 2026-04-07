@@ -25,7 +25,18 @@ from mlody.core.targets import parse_target
 from mlody.core.workspace import Workspace, WorkspaceLoadError, force
 from mlody.db.evaluations import open_db, write_evaluation
 from mlody.db.local_diff import compute_local_diff_sha, get_repo_root
-from mlody.resolver import resolve_workspace
+from mlody.resolver import (
+    MlodyActionValue,
+    MlodyFolderValue,
+    MlodySourceValue,
+    MlodyTaskValue,
+    MlodyUnresolvedValue,
+    MlodyValue,
+    MlodyValueValue,
+    MlodyWorkspaceValue,
+    resolve_label_to_value,
+    resolve_workspace,
+)
 from mlody.resolver.errors import WorkspaceResolutionError
 
 _logger = logging.getLogger(__name__)
@@ -115,7 +126,12 @@ def show_fn(
     )
     _committoid, inner_label = _parse_inner(label)
     print_fn(pretty_repr(_parse_label_struct(label)))
-    return force(workspace.resolve(inner_label))
+
+    from mlody.core.label import parse_label as _core_parse_label
+
+    concrete_label = _core_parse_label(inner_label)
+    mlody_value = resolve_label_to_value(concrete_label, workspace)
+    return mlody_value
 
 
 def _parse_inner(label: str) -> tuple[str | None, str]:
@@ -139,6 +155,36 @@ def _is_primitive(value: object) -> bool:
 def _format_value(value: object) -> str:
     if _is_primitive(value):
         return str(value)
+    return pretty_repr(value)
+
+
+def _render_mlody_value(value: MlodyValue) -> str:
+    """Render a typed MlodyValue to a human-readable string for stdout.
+
+    Each branch corresponds to a value kind. The exact format is an
+    implementation-time detail (design Q-01): using str()/pretty_repr()
+    for now to produce sensible output for all types.
+    """
+    if isinstance(value, MlodyWorkspaceValue):
+        name = value.name or "(cwd)"
+        return f"workspace: {name}\nroot: {value.root}"
+    if isinstance(value, MlodyFolderValue):
+        children_display = ", ".join(value.children) if value.children else "(empty)"
+        return f"folder: {value.path}\nchildren: {children_display}"
+    if isinstance(value, MlodySourceValue):
+        return f"source: {value.path}.mlody"
+    if isinstance(value, MlodyTaskValue):
+        return f"task:\n{pretty_repr(value.struct)}"
+    if isinstance(value, MlodyActionValue):
+        return f"action:\n{pretty_repr(value.struct)}"
+    if isinstance(value, MlodyValueValue):
+        return f"value:\n{pretty_repr(value.struct)}"
+    # _RawAttrValue — terminal attribute reached after traversal
+    from mlody.resolver.label_value import _RawAttrValue
+
+    if isinstance(value, _RawAttrValue):
+        return _format_value(value.value)
+    # MlodyUnresolvedValue is handled by the caller (exits 1), not here
     return pretty_repr(value)
 
 
@@ -182,7 +228,9 @@ def _render_dag_table(display_graph: networkx.MultiDiGraph, title: str) -> None:
     try:
         order = list(networkx.topological_sort(display_graph))
     except networkx.NetworkXUnfeasible:
-        click.echo(click.style("Error: cycle detected in task graph", fg="red"), err=True)
+        click.echo(
+            click.style("Error: cycle detected in task graph", fg="red"), err=True
+        )
         return
 
     table = Table(title=title, show_lines=True, expand=True)
@@ -200,7 +248,9 @@ def _render_dag_table(display_graph: networkx.MultiDiGraph, title: str) -> None:
         inputs_str = _format_value_list(getattr(task_struct, "inputs", []))
         outputs_str = _format_value_list(getattr(task_struct, "outputs", []))
         config_str = _format_value_list(getattr(task_struct, "config", []))
-        task_cell = f"{node_id}\nIn:  {inputs_str}\nOut: {outputs_str}\nCfg: {config_str}"
+        task_cell = (
+            f"{node_id}\nIn:  {inputs_str}\nOut: {outputs_str}\nCfg: {config_str}"
+        )
         table.add_row(
             task_cell,
             _format_action_cell(getattr(task_struct, "action", None), task_node.action),
@@ -272,11 +322,40 @@ def show(ctx: click.Context, targets: tuple[str, ...]) -> None:
                 full_label = (
                     f"{_committoid}|{expanded_inner}" if _committoid else expanded_inner
                 )
-                click.echo(
-                    json.dumps(dataclasses.asdict(_parse_label_struct(full_label)), indent=2)
-                )
+                if verbose:
+                    click.echo(
+                        json.dumps(
+                            dataclasses.asdict(_parse_label_struct(full_label)),
+                            indent=2,
+                        )
+                    )
                 _maybe_print_dag_plan(workspace, expanded_inner)
-                value = force(workspace.resolve(expanded_inner))
+
+                # Resolve the concrete label to a typed MlodyValue (new pipeline step)
+                from mlody.core.label import parse_label as _core_parse_label
+                from mlody.core.label.label import Label as _Label
+
+                if expanded_inner == "":
+                    # Bare workspace label (e.g. "HEAD", "main") — construct
+                    # the label directly rather than parsing an empty string.
+                    concrete_label = _Label(
+                        workspace=_committoid,
+                        workspace_query=None,
+                        entity=None,
+                        entity_query=None,
+                        attribute_path=None,
+                        attribute_query=None,
+                    )
+                else:
+                    concrete_label = _core_parse_label(expanded_inner)
+                mlody_value = resolve_label_to_value(concrete_label, workspace)
+
+                if isinstance(mlody_value, MlodyUnresolvedValue):
+                    has_error = True
+                    click.echo(
+                        click.style(f"Error: {mlody_value.reason}", fg="red"), err=True
+                    )
+                    continue
 
                 if resolved_sha is not None:
                     # Only record evaluations for committoid-qualified labels
@@ -285,17 +364,23 @@ def show(ctx: click.Context, targets: tuple[str, ...]) -> None:
                     meta = _read_meta(cache_root, resolved_sha)
                     _record_evaluation(
                         resolved_sha=resolved_sha,
-                        requested_ref=str(meta.get("requested_ref", _committoid or target)),
-                        local_only=bool(meta.get("local_only", False)),
-                        repo=meta.get("repo") if isinstance(meta.get("repo"), str) else "",  # type: ignore[arg-type]
-                        resolved_at=str(
-                            meta.get("resolved_at", datetime.now(timezone.utc).isoformat())
+                        requested_ref=str(
+                            meta.get("requested_ref", _committoid or target)
                         ),
-                        value_description=pretty_repr(value),
+                        local_only=bool(meta.get("local_only", False)),
+                        repo=meta.get("repo")
+                        if isinstance(meta.get("repo"), str)
+                        else "",  # type: ignore[arg-type]
+                        resolved_at=str(
+                            meta.get(
+                                "resolved_at", datetime.now(timezone.utc).isoformat()
+                            )
+                        ),
+                        value_description=_render_mlody_value(mlody_value),
                     )
 
                 print("-------------------------------")
-                click.echo(_format_value(value))
+                click.echo(_render_mlody_value(mlody_value))
                 print("-------------------------------")
         except WorkspaceLoadError as exc:
             has_error = True

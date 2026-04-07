@@ -13,7 +13,15 @@ from starlarkish.core.struct import struct
 
 from mlody.cli.main import cli
 from mlody.cli.show import show_fn
-from mlody.resolver.errors import UnknownRefError, WorkspaceResolutionError
+from mlody.resolver.errors import UnknownRefError
+from mlody.resolver.label_value import (
+    MlodyActionValue,
+    MlodyFolderValue,
+    MlodySourceValue,
+    MlodyTaskValue,
+    MlodyUnresolvedValue,
+)
+from mlody.core.label import parse_label as _parse_label
 
 
 # ---------------------------------------------------------------------------
@@ -24,22 +32,26 @@ from mlody.resolver.errors import UnknownRefError, WorkspaceResolutionError
 class TestShowFn:
     """Requirement: show_fn accepts a label and resolves via resolve_workspace."""
 
-    def test_single_cwd_label_resolves_value(self, tmp_path: Path) -> None:
+    def test_single_cwd_label_resolves_mlody_value(self, tmp_path: Path) -> None:
         mock_ws = MagicMock()
-        mock_ws.resolve.return_value = 0.001
+        expected_value = MlodyTaskValue(struct=struct(name="lr", kind="task"))
 
-        with patch("mlody.cli.show.resolve_workspace") as mock_rw:
+        with patch("mlody.cli.show.resolve_workspace") as mock_rw, \
+             patch("mlody.cli.show.resolve_label_to_value") as mock_rlv:
             mock_rw.return_value = (mock_ws, None)
+            mock_rlv.return_value = expected_value
             result = show_fn("@bert//models:lr", monorepo_root=tmp_path)
 
-        assert result == 0.001
+        assert result is expected_value
 
     def test_resolve_workspace_called_with_label_and_root(self, tmp_path: Path) -> None:
         mock_ws = MagicMock()
-        mock_ws.resolve.return_value = 42
+        expected_value = MlodySourceValue(path="models/lr")
 
-        with patch("mlody.cli.show.resolve_workspace") as mock_rw:
+        with patch("mlody.cli.show.resolve_workspace") as mock_rw, \
+             patch("mlody.cli.show.resolve_label_to_value") as mock_rlv:
             mock_rw.return_value = (mock_ws, None)
+            mock_rlv.return_value = expected_value
             show_fn("@bert//models:lr", monorepo_root=tmp_path)
 
         mock_rw.assert_called_once_with(
@@ -51,26 +63,40 @@ class TestShowFn:
             verbose=False,
         )
 
-    def test_workspace_resolve_called_with_inner_label(self, tmp_path: Path) -> None:
+    def test_resolve_label_to_value_called_with_concrete_label(self, tmp_path: Path) -> None:
+        # After workspace resolution, resolve_label_to_value is called with the
+        # parsed concrete label and workspace.
         mock_ws = MagicMock()
-        mock_ws.resolve.return_value = 99
+        expected_value = MlodySourceValue(path="models/lr")
 
-        with patch("mlody.cli.show.resolve_workspace") as mock_rw:
+        with patch("mlody.cli.show.resolve_workspace") as mock_rw, \
+             patch("mlody.cli.show.resolve_label_to_value") as mock_rlv:
             mock_rw.return_value = (mock_ws, None)
+            mock_rlv.return_value = expected_value
             show_fn("@bert//models:lr", monorepo_root=tmp_path)
 
-        mock_ws.resolve.assert_called_once_with("@bert//models:lr")
+        mock_rlv.assert_called_once()
+        call_args = mock_rlv.call_args
+        # First arg is the parsed Label object
+        assert call_args.args[1] is mock_ws
 
-    def test_committoid_label_uses_inner_label_for_resolve(self, tmp_path: Path) -> None:
+    def test_committoid_label_uses_inner_label_for_resolver(self, tmp_path: Path) -> None:
         mock_ws = MagicMock()
-        mock_ws.resolve.return_value = "value"
+        expected_value = MlodySourceValue(path="models/lr")
 
-        with patch("mlody.cli.show.resolve_workspace") as mock_rw:
+        with patch("mlody.cli.show.resolve_workspace") as mock_rw, \
+             patch("mlody.cli.show.resolve_label_to_value") as mock_rlv:
             mock_rw.return_value = (mock_ws, "a" * 40)
+            mock_rlv.return_value = expected_value
             show_fn("main|@bert//models:lr", monorepo_root=tmp_path)
 
-        # resolve() must be called with the inner label, not the full label
-        mock_ws.resolve.assert_called_once_with("@bert//models:lr")
+        # resolve_label_to_value must be called with the inner label (not committoid-qualified)
+        mock_rlv.assert_called_once()
+        call_args = mock_rlv.call_args
+        label_arg = call_args.args[0]
+        # The label entity root should be "bert", not "main"
+        assert label_arg.entity is not None
+        assert label_arg.entity.root == "bert"
 
 
 # ---------------------------------------------------------------------------
@@ -83,12 +109,17 @@ class TestShowCommandCwdTarget:
 
     def test_cwd_target_resolves_and_prints(self, tmp_path: Path) -> None:
         mock_ws = MagicMock()
-        mock_ws.resolve.return_value = 0.001
         mock_ws.root_infos = {}
+        mock_ws.expand_wildcard_label.return_value = ["@bert//models:lr"]
+        # New path: resolve_label_to_value returns a MlodyTaskValue
+        task_struct = struct(kind="task", name="lr")
+        resolved_value = MlodyTaskValue(struct=task_struct)
 
         runner = CliRunner()
-        with patch("mlody.cli.show.resolve_workspace") as mock_rw:
+        with patch("mlody.cli.show.resolve_workspace") as mock_rw, \
+             patch("mlody.cli.show.resolve_label_to_value") as mock_rlv:
             mock_rw.return_value = (mock_ws, None)
+            mock_rlv.return_value = resolved_value
             result = runner.invoke(
                 cli,
                 ["show", "@bert//models:lr"],
@@ -96,7 +127,8 @@ class TestShowCommandCwdTarget:
             )
 
         assert result.exit_code == 0
-        assert "0.001" in result.output
+        # task rendering includes "task:" prefix
+        assert "task" in result.output or "lr" in result.output
 
     def test_cwd_target_with_legacy_workspace_injection(self) -> None:
         # Existing tests inject workspace — this legacy path must still work
@@ -144,24 +176,30 @@ class TestShowCommandCommittoidTarget:
             verbose=False,
         )
 
-    def test_committoid_target_calls_workspace_resolve_with_inner_label(
+    def test_committoid_target_calls_resolve_label_to_value_with_inner_label(
         self, tmp_path: Path
     ) -> None:
         mock_ws = MagicMock()
-        mock_ws.resolve.return_value = "value"
         mock_ws.root_infos = {}
+        mock_ws.expand_wildcard_label.return_value = ["@bert//models:lr"]
+        resolved_value = MlodySourceValue(path="models/lr")
 
         runner = CliRunner()
-        with patch("mlody.cli.show.resolve_workspace") as mock_rw:
+        with patch("mlody.cli.show.resolve_workspace") as mock_rw, \
+             patch("mlody.cli.show.resolve_label_to_value") as mock_rlv:
             mock_rw.return_value = (mock_ws, "a" * 40)
+            mock_rlv.return_value = resolved_value
             runner.invoke(
                 cli,
                 ["show", "main|@bert//models:lr"],
                 obj={"monorepo_root": tmp_path, "roots": None, "verbose": False},
             )
 
-        # workspace.resolve must be called with the inner label only
-        mock_ws.resolve.assert_called_once_with("@bert//models:lr")
+        # resolve_label_to_value must be called with inner label entity (not committoid)
+        mock_rlv.assert_called_once()
+        label_arg = mock_rlv.call_args.args[0]
+        assert label_arg.entity is not None
+        assert label_arg.entity.root == "bert"
 
 
 # ---------------------------------------------------------------------------
@@ -174,16 +212,20 @@ class TestShowCommandMixedTargets:
 
     def test_mixed_targets_printed_in_order(self, tmp_path: Path) -> None:
         mock_ws_cwd = MagicMock()
-        mock_ws_cwd.resolve.return_value = "from-cwd"
         mock_ws_cwd.root_infos = {}
-
+        mock_ws_cwd.expand_wildcard_label.return_value = ["@bert//models:lr"]
         mock_ws_commit = MagicMock()
-        mock_ws_commit.resolve.return_value = "from-main"
         mock_ws_commit.root_infos = {}
+        mock_ws_commit.expand_wildcard_label.return_value = ["@bert//models:lr"]
+
+        cwd_value = MlodySourceValue(path="from-cwd")
+        commit_value = MlodySourceValue(path="from-main")
 
         runner = CliRunner()
-        with patch("mlody.cli.show.resolve_workspace") as mock_rw:
+        with patch("mlody.cli.show.resolve_workspace") as mock_rw, \
+             patch("mlody.cli.show.resolve_label_to_value") as mock_rlv:
             mock_rw.side_effect = [(mock_ws_cwd, None), (mock_ws_commit, "a" * 40)]
+            mock_rlv.side_effect = [cwd_value, commit_value]
             result = runner.invoke(
                 cli,
                 ["show", "@bert//models:lr", "main|@bert//models:lr"],
@@ -393,15 +435,18 @@ class TestShowCommandErrors:
     def test_resolver_exception_continues_to_next_target(self, tmp_path: Path) -> None:
         # Scenario: processing continues for remaining targets after resolver error
         mock_ws = MagicMock()
-        mock_ws.resolve.return_value = "ok-value"
         mock_ws.root_infos = {}
+        mock_ws.expand_wildcard_label.return_value = ["@bert//models:good"]
+        ok_value = MlodySourceValue(path="models/good")
 
         runner = CliRunner()
-        with patch("mlody.cli.show.resolve_workspace") as mock_rw:
+        with patch("mlody.cli.show.resolve_workspace") as mock_rw, \
+             patch("mlody.cli.show.resolve_label_to_value") as mock_rlv:
             mock_rw.side_effect = [
                 UnknownRefError("bad", "origin"),
                 (mock_ws, None),
             ]
+            mock_rlv.return_value = ok_value
             result = runner.invoke(
                 cli,
                 ["show", "bad|@bert//models:lr", "@bert//models:good"],
@@ -409,7 +454,7 @@ class TestShowCommandErrors:
             )
 
         assert result.exit_code == 1
-        assert "ok-value" in result.output
+        assert "source" in result.output or "models/good" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -426,3 +471,106 @@ class TestShowRegistration:
 
         assert result.exit_code == 0
         assert "show" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Tasks 7.1–7.6: end-to-end show rendering per MlodyValue type
+# Requirement: show command — Label→Value pipeline integration
+# ---------------------------------------------------------------------------
+
+
+def _make_show_runner(
+    tmp_path: Path,
+    resolved_value: object,
+    target: str = "@bert//models:lr",
+) -> object:
+    """Helper: invoke show with resolve_label_to_value mocked to return resolved_value."""
+    mock_ws = MagicMock()
+    mock_ws.root_infos = {}
+    mock_ws.expand_wildcard_label.return_value = [target]
+
+    runner = CliRunner()
+    with patch("mlody.cli.show.resolve_workspace") as mock_rw, \
+         patch("mlody.cli.show.resolve_label_to_value") as mock_rlv:
+        mock_rw.return_value = (mock_ws, None)
+        mock_rlv.return_value = resolved_value
+        return runner.invoke(
+            cli,
+            ["show", target],
+            obj={"monorepo_root": tmp_path, "roots": None, "verbose": False},
+        )
+
+
+class TestShowMlodyValueRendering:
+    """Requirement: show renders each MlodyValue kind and exits 0/1 correctly."""
+
+    def test_show_renders_folder_value_exits_0(self, tmp_path: Path) -> None:
+        """Task 7.1 — Scenario: show renders MlodyFolderValue."""
+        value = MlodyFolderValue(path="pkg/mydir", children=["a.mlody", "b.mlody"])
+        result = _make_show_runner(tmp_path, value, target="@bert//pkg/mydir")
+
+        assert result.exit_code == 0  # type: ignore[union-attr]
+        assert "pkg/mydir" in result.output  # type: ignore[union-attr]
+
+    def test_show_renders_source_value_exits_0(self, tmp_path: Path) -> None:
+        """Task 7.2 — Scenario: show renders MlodySourceValue."""
+        value = MlodySourceValue(path="pkg/foo")
+        result = _make_show_runner(tmp_path, value, target="@bert//pkg/foo")
+
+        assert result.exit_code == 0  # type: ignore[union-attr]
+        assert "pkg/foo" in result.output  # type: ignore[union-attr]
+
+    def test_show_renders_task_value_exits_0(self, tmp_path: Path) -> None:
+        """Task 7.3 — Scenario: show renders MlodyTaskValue."""
+        value = MlodyTaskValue(struct=struct(kind="task", name="my_task"))
+        result = _make_show_runner(tmp_path, value, target="@bert//pkg/foo:my_task")
+
+        assert result.exit_code == 0  # type: ignore[union-attr]
+        assert "task" in result.output  # type: ignore[union-attr]
+
+    def test_show_renders_action_value_exits_0(self, tmp_path: Path) -> None:
+        """Task 7.4 — Scenario: show renders MlodyActionValue."""
+        value = MlodyActionValue(struct=struct(kind="action", name="my_action"))
+        result = _make_show_runner(tmp_path, value, target="@bert//pkg/foo:my_action")
+
+        assert result.exit_code == 0  # type: ignore[union-attr]
+        assert "action" in result.output  # type: ignore[union-attr]
+
+    def test_show_exits_1_on_unresolved_value(self, tmp_path: Path) -> None:
+        """Task 7.5 — Scenario: show prints red error and exits 1 on MlodyUnresolvedValue."""
+        label = _parse_label("@bert//pkg/foo:ghost")
+        value = MlodyUnresolvedValue(
+            label=label, reason="entity 'ghost' not found in registry"
+        )
+        mock_ws = MagicMock()
+        mock_ws.root_infos = {}
+        mock_ws.expand_wildcard_label.return_value = ["@bert//pkg/foo:ghost"]
+
+        runner = CliRunner()
+        with patch("mlody.cli.show.resolve_workspace") as mock_rw, \
+             patch("mlody.cli.show.resolve_label_to_value") as mock_rlv:
+            mock_rw.return_value = (mock_ws, None)
+            mock_rlv.return_value = value
+            result = runner.invoke(
+                cli,
+                ["show", "@bert//pkg/foo:ghost"],
+                obj={"monorepo_root": tmp_path, "roots": None, "verbose": False},
+            )
+
+        assert result.exit_code == 1
+        # Error message contains the reason string
+        assert "ghost" in result.stderr or "ghost" in result.output
+
+    def test_show_exits_1_on_workspace_resolution_error(self, tmp_path: Path) -> None:
+        """Task 7.6 — Scenario: show exits 1 on WorkspaceResolutionError (existing behavior)."""
+        runner = CliRunner()
+        with patch("mlody.cli.show.resolve_workspace") as mock_rw:
+            mock_rw.side_effect = UnknownRefError("badref", "origin")
+            result = runner.invoke(
+                cli,
+                ["show", "badref|@bert//models:lr"],
+                obj={"monorepo_root": tmp_path, "roots": None, "verbose": False},
+            )
+
+        assert result.exit_code == 1
+        assert "badref" in result.stderr or "badref" in result.output

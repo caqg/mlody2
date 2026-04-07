@@ -62,23 +62,35 @@ class TestParseLabel:
         assert inner == "@lexica//models:bert"
 
     def test_attribute_path_is_preserved_on_entity_label(self) -> None:
-        # Scenario: entity label with attribute path keeps dotted suffix in inner label.
+        # Scenario: entity label with tick attribute path keeps tick separator in inner label.
         committoid, inner = parse_label("@common//huggingface/downloader:downloader'outputs.model")
+        assert committoid is None
+        assert inner == "@common//huggingface/downloader:downloader'outputs.model"
+
+    def test_attribute_path_is_preserved_with_committoid(self) -> None:
+        # Scenario: committoid + entity tick attribute path preserves tick separator.
+        committoid, inner = parse_label("main|@common//huggingface/downloader:downloader'outputs.model")
+        assert committoid == "main"
+        assert inner == "@common//huggingface/downloader:downloader'outputs.model"
+
+    def test_entity_field_path_is_preserved_in_inner_label(self) -> None:
+        # Scenario: entity field path (dot after colon) is preserved using dot separator.
+        committoid, inner = parse_label("@common//huggingface/downloader:downloader.outputs.model")
         assert committoid is None
         assert inner == "@common//huggingface/downloader:downloader.outputs.model"
 
-    def test_attribute_path_is_preserved_with_committoid(self) -> None:
-        # Scenario: committoid + entity attribute path preserves suffix.
-        committoid, inner = parse_label("main|@common//huggingface/downloader:downloader'outputs.model")
-        assert committoid == "main"
-        assert inner == "@common//huggingface/downloader:downloader.outputs.model"
+    def test_bare_root_label_round_trips(self) -> None:
+        # Scenario: bare @root with no path re-serialises without // suffix.
+        committoid, inner = parse_label("@lexica")
+        assert committoid is None
+        assert inner == "@lexica"
 
-    def test_missing_pipe_raises_label_parse_error(self) -> None:
-        # Scenario: workspace-only label raises LabelParseError — no entity spec
-        with pytest.raises(LabelParseError) as exc_info:
-            parse_label("notaref")
-        assert exc_info.value.label == "notaref"
-        assert "entity" in exc_info.value.reason or "//" in exc_info.value.reason
+    def test_bare_workspace_label_returns_empty_inner(self) -> None:
+        # Scenario: bare committoid label (no entity, no attribute) is a valid
+        # workspace reference — returns (committoid, "") for bare-workspace resolution.
+        committoid, inner = parse_label("notaref")
+        assert committoid == "notaref"
+        assert inner == ""
 
     def test_inner_label_not_at_or_slash_raises_label_parse_error(self) -> None:
         # Scenario: invalid inner label (entity does not start with @//) raises LabelParseError

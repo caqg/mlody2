@@ -11,6 +11,11 @@ typedef(
 def named_arg():
     return "posix"
 
+value(
+    name = "test-model",
+    type = ":hf-model",
+)
+
 task(
     name = "downloader",
     outputs = [
