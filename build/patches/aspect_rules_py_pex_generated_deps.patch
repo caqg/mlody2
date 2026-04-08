@@ -1,0 +1,25 @@
+--- a/py/private/py_pex_binary.bzl
++++ b/py/private/py_pex_binary.bzl
+@@ -54,14 +54,19 @@
+         if dest_path.find(exclude) != -1:
+             return []
+
+-    site_packages_i = f.path.find("site-packages")
++    # For generated files (e.g. namespace __init__.py from rules_python),
++    # f.path starts with "bazel-out/...". Strip the output root prefix so both
++    # source and generated files yield the same logical path; uniquify=True on
++    # add_all then collapses the duplicate --dep entries.
++    normalized_path = f.path[len(f.root.path):].lstrip("/") if f.root.path else f.path
++    site_packages_i = normalized_path.find("site-packages")
+
+     # If the path contains 'site-packages', treat it as a third party dep
+     if site_packages_i != -1:
+-        if f.path.find("dist-info", site_packages_i) != -1 and f.path.count("/", site_packages_i) == 2:
++        if normalized_path.find("dist-info", site_packages_i) != -1 and normalized_path.count("/", site_packages_i) == 2:
+             return ["--distinfo={}".format(f.dirname)]
+
+-        return ["--dep={}".format(f.path[:site_packages_i + len("site-packages")])]
++        return ["--dep={}".format(normalized_path[:site_packages_i + len("site-packages")])]
+
+     # If the path does not have a `site-packages` in it, then put it into the standard runfiles tree.
+     return ["--source={}={}".format(f.path, dest_path)]

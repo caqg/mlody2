@@ -1,37 +1,5 @@
 load("//build/bzl:python.bzl", "o_py_library")
-load("//build/copybara:copybara.bzl", "copybara_workflow")
 
-copybara_workflow(
-    name = "mlody",
-    excludes = [
-        "mlody/docs/**",
-    ],
-    includes = [
-        ".bazeliskrc",
-        "BUILD.bazel",
-        "MODULE.bazel",
-        "build/bzl/BUILD.bazel",
-        "build/bzl/python.bzl",
-        "build/modules/BUILD.bazel",
-        "build/modules/cpp.MODULE.bazel",
-        "build/modules/misc.MODULE.bazel",
-        "build/modules/python.MODULE.bazel",
-        "build/modules/tools.MODULE.bazel",
-        "common/python/starlarkish/**",
-        "gazelle_python.yaml",
-        "mlody/**",
-        "pyproject.toml",
-        "requirements/**",
-        "tools/**",
-    ],
-    moves = {
-        "mlody/EXTERNAL_LICENSE": "LICENSE",
-        "mlody/README.md": "README.md",
-    },
-    pr_excludes = [
-        "MODULE.bazel",  # contains elided blocks so for now is a one-way only thing
-    ],
-)
 
 o_py_library(
     name = "mlody_lib",
