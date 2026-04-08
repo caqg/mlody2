@@ -169,7 +169,11 @@ def _pretty_struct_str(obj: object, _depth: int = 0) -> str:
     inner = "    " * (_depth + 1)
 
     if hasattr(obj, "as_mapping"):
-        fields = {k: v for k, v in obj.as_mapping().items() if not k.startswith("_")}
+        fields = {
+            k: v
+            for k, v in obj.as_mapping().items()
+            if not k.startswith("_") or k == "_source_range"
+        }
         if not fields:
             return "struct()"
         parts = [f"{inner}{k}={_pretty_struct_str(v, _depth + 1)}" for k, v in fields.items()]
