@@ -1,0 +1,2 @@
+"""Common Python namespace package."""
+
