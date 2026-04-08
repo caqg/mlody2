@@ -40,7 +40,7 @@ def _field_values_compatible(field_name, left, right):
     if left == right:
         return True
 
-    if field_name not in ["type", "location"]:
+    if field_name not in ["type", "location", "representation"]:
         return False
 
     if type(left) != "struct" or type(right) != "struct":
@@ -55,6 +55,14 @@ def _field_values_compatible(field_name, left, right):
         return False
     if field_name == "location" and left_kind != "location":
         return False
+    if field_name == "representation" and left_kind != "representation":
+        return False
+
+    if field_name == "representation":
+        # Structural equality by kind + name; representations have no attributes in this phase.
+        return (
+            python.getattr(left, "name", None) == python.getattr(right, "name", None)
+        )
 
     left_attrs = _as_dict_or_none(python.getattr(left, "attributes", None)) or {}
     right_attrs = _as_dict_or_none(python.getattr(right, "attributes", None)) or {}

@@ -207,10 +207,12 @@ class Evaluator:
         self.roots: dict[str, Named] = dict()
         self.types: dict[str, Named] = dict()
         self.locations: dict[str, Named] = dict()
+        self.representations: dict[str, Named] = dict()
         self.values: dict[str, Named] = dict()
         self._roots_by_name: dict[str, Named] = {}
         self._types_by_name: dict[str, Named] = {}
         self._locations_by_name: dict[str, Named] = {}
+        self._representations_by_name: dict[str, Named] = {}
         self._values_by_name: dict[str, Named] = {}
         self.actions: dict[str, Named] = {}
         self._actions_by_name: dict[str, Named] = {}
@@ -268,6 +270,9 @@ class Evaluator:
         elif kind == "location":
             self.locations[key] = thing
             self._locations_by_name[thing.name] = thing
+        elif kind == "representation":
+            self.representations[key] = thing
+            self._representations_by_name[thing.name] = thing
         elif kind == "value":
             self.values[key] = thing
             self._values_by_name[thing.name] = thing
@@ -279,7 +284,7 @@ class Evaluator:
             self._tasks_by_name[thing.name] = thing
         else:
             raise ValueError(
-                f"Unknown registration kind {kind!r}. Supported kinds: 'root', 'type', 'location', 'value', 'action', 'task'."
+                f"Unknown registration kind {kind!r}. Supported kinds: 'root', 'type', 'location', 'representation', 'value', 'action', 'task'."
             )
         self.all[(kind, _stem, thing.name)] = thing
         _log.debug("Registered %r as %s", key, kind)
@@ -306,6 +311,12 @@ class Evaluator:
                     f"No location {name!r}. Available: {sorted(self._locations_by_name)}"
                 )
             return self._locations_by_name[name]
+        elif kind == "representation":
+            if name not in self._representations_by_name:
+                raise NameError(
+                    f"No representation {name!r}. Available: {sorted(self._representations_by_name)}"
+                )
+            return self._representations_by_name[name]
         elif kind == "value":
             if name not in self._values_by_name:
                 raise NameError(
@@ -326,7 +337,7 @@ class Evaluator:
             return self._tasks_by_name[name]
         else:
             raise ValueError(
-                f"Unknown lookup kind {kind!r}. Supported: 'root', 'type', 'location', 'value', 'action', 'task'."
+                f"Unknown lookup kind {kind!r}. Supported: 'root', 'type', 'location', 'representation', 'value', 'action', 'task'."
             )
 
     def _load(
