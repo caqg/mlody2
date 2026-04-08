@@ -15,6 +15,7 @@ def repr(*, name, type, to_canonical, from_canonical=None):
 
 def _type_impl(ctx):
     base_type = python.getattr(ctx.attr, 'base', None)
+    virtual_attributes = python.getattr(ctx.attr, "virtual_attributes", None)
 
     # Handle fields kwarg: per-key map typedef (e.g. typedef(name="point", fields=[field(...)]))
     fields = python.getattr(ctx.attr, "fields", None)
@@ -35,6 +36,7 @@ def _type_impl(ctx):
             attributes=captured_attrs, _allowed_attrs={},
             _root_kind="map", validator=_map_validator,
             canonical=captured_canonical,
+            virtual_attributes=virtual_attributes,
         )
         builtins.register(ctx.kind, new_type_struct)
         builtins.inject(ctx.attr.name, _make_factory(new_type_struct))
@@ -58,6 +60,7 @@ def _type_impl(ctx):
             attributes=captured_attrs, _allowed_attrs={},
             _root_kind="tuple", validator=_tuple_validator,
             canonical=captured_canonical,
+            virtual_attributes=virtual_attributes,
         )
         builtins.register(ctx.kind, new_type_struct)
         builtins.inject(ctx.attr.name, _make_factory(new_type_struct))
@@ -98,6 +101,8 @@ def _type_impl(ctx):
 
     if attrs_mandatory:
         other_fields["_attrs_mandatory"] = attrs_mandatory
+    if virtual_attributes != None:
+        other_fields["virtual_attributes"] = virtual_attributes
 
     # Always explicitly set abstract (prevents inheriting True from an abstract base).
     abstract = python.getattr(ctx.attr, 'abstract', None)
@@ -198,6 +203,7 @@ typedef = rule(
         "strict":           attr(type="bool",       mandatory=False, default=None),
         "abstract":         attr(type="bool",       mandatory=False, default=None),
         "representations":  attr(type="repr_list",  mandatory=False, default=None),
+        "virtual_attributes": attr(type="field_list", mandatory=False, default=None),
     }
 )
 
@@ -304,7 +310,23 @@ typedef(
 )
 
 # ---- mlody built-in types ----
-typedef(name="mlody-workspace", description="A snapshot of an mlody workspace.")
+typedef(
+    name = "mlody_workspace_info",
+    base = record(fields = [
+        field(name = "path",   type = string()),
+        field(name = "branch", type = string()),
+        field(name = "sha",    type = string()),
+        field(name = "roots",  type = vector(element_type=string())),
+    ]),
+)
+
+typedef(
+    name = "mlody-workspace",
+    description = "A snapshot of an mlody workspace.",
+    virtual_attributes = [
+        field(name = "info", type = mlody_workspace_info()),
+    ],
+)
 
 typedef(
     name = "mlody-folder",
@@ -322,4 +344,3 @@ typedef(
         field(name = "entities", type = map(key_type=string())),
     ]),
 )
-

@@ -16,6 +16,7 @@ from starlarkish.evaluator.evaluator import Evaluator
 from mlody.common.context import build_ctx
 from mlody.core.source_parser import extract_entity_ranges
 from mlody.core.targets import TargetAddress, parse_target, resolve_target_value
+from mlody.core.virtual_value import force_virtual_value, make_virtual_value, traverse_virtual_value
 
 _logger = logging.getLogger(__name__)
 _DEFAULT_SKIPPED_MLODY_PATHS = ("mlody/common/sandbox.mlody",)
@@ -28,21 +29,7 @@ def force(v: object) -> object:
     has ``type == "virtual"``.  In that case ``location.materializer(v)`` is
     called and its return value is returned.  All other inputs pass through.
     """
-    from starlarkish.core.struct import Struct
-
-    if not isinstance(v, Struct):
-        return v
-    if getattr(v, "kind", None) != "value":
-        return v
-    loc = getattr(v, "location", None)
-    if loc is None:
-        return v
-    if getattr(loc, "type", None) != "virtual":
-        return v
-    materializer = getattr(loc, "materializer", None)
-    if materializer is None:
-        return v
-    return cast(Any, materializer)(v)
+    return cast(Any, force_virtual_value(v))
 
 
 class WorkspaceLoadError(Exception):
@@ -324,7 +311,6 @@ class Workspace:
             # Workspace-attribute label: return a virtual value Struct whose
             # materializer forces the attribute access lazily.
             from mlody.core.label import parse_label as _core_parse_label
-            from starlarkish.core.struct import Struct
 
             lbl = _core_parse_label(target)
             if lbl.attribute_path is None:
@@ -336,29 +322,20 @@ class Workspace:
                 msg = "Type 'mlody-workspace' is not registered; ensure load() is called before resolve()"
                 raise RuntimeError(msg)
 
-            attr_path = lbl.attribute_path
-            _ws_ref = self
+            def _workspace_materializer(_v: object) -> object:
+                _logger.debug(
+                    "workspace materializer invoked for label %r with value %r",
+                    target,
+                    _v,
+                )
+                return self
 
-            def _materializer(_v: object) -> object:
-                    _logger.debug("workspace materializer invoked for label %r with value %r", target, _v)
-                    obj: object = _ws_ref
-                    for segment in attr_path:
-                        obj = _step(obj, segment)
-                    return obj
-
-            virtual_loc = Struct(
-                kind="location",
-                type="virtual",
-                name="virtual",
-                materializer=_materializer,
-            )
-            return Struct(
-                kind="value",
-                type=ws_type,
-                location=virtual_loc,
+            root_value = make_virtual_value(
+                value_type=ws_type,
                 label=target,
-                _lineage=[],
+                materializer=_workspace_materializer,
             )
+            return traverse_virtual_value(root_value, lbl.attribute_path, target)
 
         if isinstance(target, str) and (
             target.startswith("@") or target.startswith("//")

@@ -64,7 +64,10 @@ o_py_library(
 
 o_py_library(
     name = "workspace_lib",
-    srcs = ["workspace.py"],
+    srcs = [
+        "virtual_value.py",
+        "workspace.py",
+    ],
     data = ["builtins.mlody"],
     visibility = ["//:__subpackages__"],
     deps = [
@@ -112,6 +115,7 @@ o_py_library(
         "plan.py",
         "source_parser.py",
         "targets.py",
+        "virtual_value.py",
         "workspace.py",
     ],
     visibility = ["//:__subpackages__"],

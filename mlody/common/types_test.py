@@ -121,6 +121,25 @@ def test_integer_rejects_wrong_attr_type() -> None:
             ev.eval_file(root / "test.mlody")
 
 
+def test_typedef_stores_virtual_attributes_on_type_struct() -> None:
+    """typedef(..., virtual_attributes=[...]) preserves declared virtual attrs."""
+    files = dict(_BASE_FILES)
+    files["test.mlody"] = dedent("""\
+        load("//mlody/common/types.mlody")
+        typedef(
+            name="workspace_meta",
+            virtual_attributes=[field(name="info", type=string())],
+        )
+        builtins.register("root", struct(name="r", data=builtins.lookup("type", "workspace_meta")))
+    """)
+    with InMemoryFS(files, root="/project") as root:
+        ev = Evaluator(root)
+        ev.eval_file(root / "test.mlody")
+
+    data = ev._roots_by_name["r"].data  # type: ignore[attr-defined]
+    assert getattr(data.virtual_attributes[0], "name", None) == "info"  # type: ignore[attr-defined]
+
+
 # ---------------------------------------------------------------------------
 # 5. typedef with attrs produces type whose _allowed_attrs includes new attr
 # ---------------------------------------------------------------------------

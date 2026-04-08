@@ -342,10 +342,36 @@ class ValueTraversalStrategy:
         path: tuple[str, ...],
         label: "Label",
     ) -> MlodyValue:
+        from starlarkish.core.struct import Struct  # noqa: PLC0415
+        from mlody.core.virtual_value import traverse_virtual_value  # noqa: PLC0415
+
         if not path:
             return MlodyValueValue(struct=value)
 
         value_type = getattr(value, "type", None)
+        location = getattr(value, "location", None)
+        if (
+            isinstance(value, Struct)
+            and location is not None
+            and getattr(location, "type", None) == "virtual"
+        ):
+            try:
+                child_value = traverse_virtual_value(
+                    value,
+                    path,
+                    "'" + ".".join(path),
+                )
+            except (AttributeError, KeyError) as exc:
+                missing = str(exc.args[0]) if exc.args else path[-1]
+                return MlodyUnresolvedValue(
+                    label=label,
+                    reason=(
+                        f"attribute '{missing}' not found "
+                        f"(label: {label!r})"
+                    ),
+                )
+            return MlodyValueValue(struct=child_value)
+
         is_record = (
             getattr(value_type, "kind", None) == "record"
             or getattr(value_type, "_root_kind", None) == "record"
@@ -488,22 +514,26 @@ def resolve_label_to_value(label: "Label", workspace: "Workspace") -> MlodyValue
     # A bare workspace label with no path at all → MlodyWorkspaceValue.
     if label.entity is None:
         if label.attribute_path is not None:
-            # Workspace-level attribute label (e.g. 'info, 'info.branch).
-            # Traverse workspace attributes directly — do not treat the path as
-            # a filesystem path.
-            obj: object = workspace
-            for segment in label.attribute_path:
-                try:
-                    obj = getattr(obj, segment)
-                except AttributeError:
-                    return MlodyUnresolvedValue(
-                        label=label,
-                        reason=(
-                            f"workspace has no attribute '{segment}' "
-                            f"(label: {label!r})"
-                        ),
-                    )
-            return _RawAttrValue(value=obj, label=label)
+            from mlody.core.virtual_value import make_virtual_value  # noqa: PLC0415
+
+            ws_type = workspace.evaluator._types_by_name.get("mlody-workspace")  # type: ignore[attr-defined]
+            if ws_type is None:
+                return MlodyUnresolvedValue(
+                    label=label,
+                    reason="type 'mlody-workspace' is not registered",
+                )
+
+            label_str = "'" + ".".join(label.attribute_path)
+
+            def _workspace_materializer(_v: object) -> object:
+                return workspace
+
+            root_value = make_virtual_value(
+                value_type=ws_type,
+                label=label_str,
+                materializer=_workspace_materializer,
+            )
+            return ValueTraversalStrategy().traverse(root_value, label.attribute_path, label)
         return MlodyWorkspaceValue(
             name=label.workspace,
             root=str(workspace._monorepo_root),  # noqa: SLF001

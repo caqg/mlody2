@@ -53,6 +53,32 @@ load("//mlody/core/builtins.mlody", "root")
 root(name="myroot", path="//teams/myroot", description="test root")
 """
 
+TYPES_MLODY = """\
+builtins.register("type", struct(
+    kind="type", type="mlody_workspace_info", name="mlody_workspace_info",
+    fields=[
+        struct(name="path", type=struct(kind="type", type="string", name="string")),
+        struct(name="branch", type=struct(kind="type", type="string", name="string")),
+        struct(name="sha", type=struct(kind="type", type="string", name="string")),
+        struct(name="roots", type=struct(kind="type", type="vector", name="vector")),
+    ],
+    attributes={}, _allowed_attrs={},
+    _root_kind="record",
+))
+builtins.register("type", struct(
+    kind="type", type="mlody-workspace", name="mlody-workspace",
+    attributes={}, _allowed_attrs={},
+    virtual_attributes=[
+        struct(name="info", type=struct(kind="type", type="mlody_workspace_info", name="mlody_workspace_info", _root_kind="record", fields=[
+            struct(name="path", type=struct(kind="type", type="string", name="string")),
+            struct(name="branch", type=struct(kind="type", type="string", name="string")),
+            struct(name="sha", type=struct(kind="type", type="string", name="string")),
+            struct(name="roots", type=struct(kind="type", type="vector", name="vector")),
+        ])),
+    ],
+))
+"""
+
 TASK_MLODY = """\
 builtins.register("task", struct(
     kind="task",
@@ -94,6 +120,7 @@ def _make_workspace(fs: FakeFilesystem, extra_files: dict[str, str] | None = Non
     """Construct a minimal Workspace with the given extra .mlody files."""
     fs.create_file(str(ROOT / "mlody/core/builtins.mlody"), contents=BUILTINS_MLODY)
     fs.create_file(str(ROOT / "mlody/roots.mlody"), contents=ROOTS_MLODY)
+    fs.create_file(str(ROOT / "mlody/common/types.mlody"), contents=TYPES_MLODY)
 
     if extra_files:
         for rel_path, contents in extra_files.items():
@@ -324,6 +351,41 @@ class TestValueKind:
 
         assert isinstance(result, MlodyUnresolvedValue)
         assert "nonexistent" in result.reason
+
+
+class TestWorkspaceVirtualAttributes:
+    """Requirement: Workspace attrs resolve as typed virtual values."""
+
+    def test_workspace_info_resolves_to_typed_value(self, fs: FakeFilesystem) -> None:
+        ws = _make_workspace(fs)
+
+        label = parse_label("'info")
+        result = resolve_label_to_value(label, ws)
+
+        assert isinstance(result, MlodyValueValue)
+        assert getattr(result.struct, "kind", None) == "value"
+        assert getattr(getattr(result.struct, "type", None), "name", None) == "mlody_workspace_info"
+        assert getattr(getattr(result.struct, "location", None), "type", None) == "virtual"
+
+    def test_workspace_info_branch_resolves_to_typed_leaf_value(self, fs: FakeFilesystem) -> None:
+        ws = _make_workspace(fs)
+
+        label = parse_label("'info.branch")
+        result = resolve_label_to_value(label, ws)
+
+        assert isinstance(result, MlodyValueValue)
+        assert getattr(result.struct, "kind", None) == "value"
+        assert getattr(getattr(result.struct, "type", None), "name", None) == "string"
+        assert getattr(getattr(result.struct, "location", None), "type", None) == "virtual"
+
+    def test_missing_workspace_virtual_attribute_returns_unresolved(self, fs: FakeFilesystem) -> None:
+        ws = _make_workspace(fs)
+
+        label = parse_label("'missing")
+        result = resolve_label_to_value(label, ws)
+
+        assert isinstance(result, MlodyUnresolvedValue)
+        assert "missing" in result.reason
 
 
 # ---------------------------------------------------------------------------

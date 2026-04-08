@@ -33,8 +33,27 @@ root(name="lexica", path="//mlody/teams/lexica", description="text ML team")
 
 TYPES_MLODY = """\
 builtins.register("type", struct(
+    kind="type", type="mlody_workspace_info", name="mlody_workspace_info",
+    fields=[
+        struct(name="path", type=struct(kind="type", type="string", name="string")),
+        struct(name="branch", type=struct(kind="type", type="string", name="string")),
+        struct(name="sha", type=struct(kind="type", type="string", name="string")),
+        struct(name="roots", type=struct(kind="type", type="vector", name="vector")),
+    ],
+    attributes={}, _allowed_attrs={},
+    _root_kind="record",
+))
+builtins.register("type", struct(
     kind="type", type="mlody-workspace", name="mlody-workspace",
     attributes={}, _allowed_attrs={},
+    virtual_attributes=[
+        struct(name="info", type=struct(kind="type", type="mlody_workspace_info", name="mlody_workspace_info", _root_kind="record", fields=[
+            struct(name="path", type=struct(kind="type", type="string", name="string")),
+            struct(name="branch", type=struct(kind="type", type="string", name="string")),
+            struct(name="sha", type=struct(kind="type", type="string", name="string")),
+            struct(name="roots", type=struct(kind="type", type="vector", name="vector")),
+        ])),
+    ],
 ))
 """
 
@@ -276,6 +295,19 @@ class TestResolve:
         assert getattr(getattr(result, "location", None), "type", None) == "virtual"
         assert getattr(result, "label", None) == "'info"
 
+    def test_resolve_nested_workspace_attr_returns_typed_value_struct(self, project: Path) -> None:
+        from starlarkish.core.struct import Struct
+
+        ws = Workspace(monorepo_root=project)
+        ws.load()
+
+        result = ws.resolve("'info.branch")
+        assert isinstance(result, Struct)
+        assert getattr(result, "kind", None) == "value"
+        assert getattr(getattr(result, "type", None), "name", None) == "string"
+        assert getattr(getattr(result, "location", None), "type", None) == "virtual"
+        assert getattr(result, "label", None) == "'info.branch"
+
     def test_force_workspace_attr_returns_attribute(self, project: Path) -> None:
         from mlody.core.workspace import force
 
@@ -284,6 +316,15 @@ class TestResolve:
 
         result = force(ws.resolve("'info"))
         assert result == ws.info
+
+    def test_force_nested_workspace_attr_returns_leaf(self, project: Path) -> None:
+        from mlody.core.workspace import force
+
+        ws = Workspace(monorepo_root=project)
+        ws.load()
+
+        result = force(ws.resolve("'info.branch"))
+        assert result == ws.info.branch
 
     def test_force_passes_through_non_value(self, project: Path) -> None:
         from mlody.core.workspace import force
