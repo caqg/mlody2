@@ -968,17 +968,22 @@ builtins.register("value", Struct(
         assert isinstance(result, MlodyUnresolvedValue)
         assert "cross-kind" in result.reason.lower() or "posix" in result.reason
 
-    def test_multi_segment_field_path_does_not_activate_record_traversal(
+    def test_multi_segment_field_path_on_record_returns_unresolved_for_missing_field(
         self, fs: FakeFilesystem
     ) -> None:
-        """Scenario: Multi-segment field_path does NOT activate record-traversal branch.
+        """Scenario: Multi-segment field_path activates record-traversal branch.
 
-        When field_path has more than one segment, the existing generic _step /
-        getattr traversal is used instead.
+        After the multi-level fix (mlody-field-traversal-multilevel), multi-segment
+        paths on record-typed values use _traverse_one_step at every level.
+        When a field is absent from type.fields (empty list here), the result is
+        MlodyUnresolvedValue — not a fallback to generic getattr.
         """
+        from mlody.resolver.label_value import MlodyUnresolvedValue
+
         entity_mlody = """\
 record_type = Struct(kind="record", name="ModelType", fields=[])
-# The value struct has a direct .sub attribute for generic traversal.
+# The value struct has a direct .sub attribute, but the record-aware traversal
+# uses type.fields (empty here) — so "sub" is reported as missing.
 sub_struct = Struct(value=42)
 builtins.register("value", Struct(
     kind="value",
@@ -995,6 +1000,127 @@ builtins.register("value", Struct(
         ws = Workspace(monorepo_root=root)
         ws.load()
 
-        # Two-segment path: "sub.value" — falls through to generic _step loop.
+        # "sub" is not in type.fields → record traversal returns MlodyUnresolvedValue.
         result = ws.resolve("@bert//entity:my_model.sub.value")
-        assert result == 42
+        assert isinstance(result, MlodyUnresolvedValue)
+        assert "sub" in result.reason
+
+
+class TestMultiLevelRecordTraversalViaWorkspace:
+    """Requirement: Multi-level traversal in Workspace.resolve via _traverse_one_step.
+
+    Scenarios trace to:
+      openspec/changes/mlody-field-traversal-multilevel/specs/multi-level-field-traversal/spec.md
+    """
+
+    def test_single_level_traversal_is_unchanged_regression(
+        self, fs: FakeFilesystem
+    ) -> None:
+        """Scenario: Single-level traversal via Workspace.resolve is unchanged (regression).
+
+        Verifies that the new multi-level loop preserves the existing single-level
+        behaviour: field struct returned with composed location.
+        """
+        from mlody.resolver.label_value import MlodyUnresolvedValue  # noqa: F401
+
+        entity_mlody = """\
+field_a = Struct(
+    name="field_a",
+    type=None,
+    location=Struct(kind="posix", type="posix", name="loc", path="a_dir"),
+)
+record_type = Struct(kind="record", name="T", fields=[field_a])
+parent_loc = Struct(kind="posix", type="posix", name="loc", path="root/path")
+builtins.register("value", Struct(
+    kind="value",
+    name="my_model",
+    type=record_type,
+    location=parent_loc,
+    default=None,
+    source=None,
+    _lineage=[],
+))
+"""
+        root = _make_record_project(fs, entity_mlody)
+        ws = Workspace(monorepo_root=root)
+        ws.load()
+
+        result = ws.resolve("@bert//entity:my_model.field_a")
+
+        assert isinstance(result, Struct)
+        loc = getattr(result, "location", None)
+        # Single-level compose: "root/path" / "a_dir" → "root/path/a_dir"
+        assert getattr(loc, "path", None) == "root/path/a_dir"
+
+    def test_two_level_traversal_composes_locations(
+        self, fs: FakeFilesystem
+    ) -> None:
+        """Scenario: Two-level traversal via Workspace.resolve composes locations.
+
+        @bert//entity:my_model.field_a.field_b with both fields record-typed →
+        location.path == "root/path" / "a_dir" / "b_dir"
+        """
+        entity_mlody = """\
+field_b = Struct(
+    name="field_b",
+    type=None,
+    location=Struct(kind="posix", type="posix", name="loc", path="b_dir"),
+)
+field_a_type = Struct(kind="record", name="AType", fields=[field_b])
+field_a = Struct(
+    name="field_a",
+    type=field_a_type,
+    location=Struct(kind="posix", type="posix", name="loc", path="a_dir"),
+)
+record_type = Struct(kind="record", name="T", fields=[field_a])
+parent_loc = Struct(kind="posix", type="posix", name="loc", path="root/path")
+builtins.register("value", Struct(
+    kind="value",
+    name="my_model",
+    type=record_type,
+    location=parent_loc,
+    default=None,
+    source=None,
+    _lineage=[],
+))
+"""
+        root = _make_record_project(fs, entity_mlody)
+        ws = Workspace(monorepo_root=root)
+        ws.load()
+
+        result = ws.resolve("@bert//entity:my_model.field_a.field_b")
+
+        assert isinstance(result, Struct)
+        loc = getattr(result, "location", None)
+        assert getattr(loc, "path", None) == "root/path/a_dir/b_dir"
+
+    def test_traversal_failure_returns_mlody_unresolved_value_without_raising(
+        self, fs: FakeFilesystem
+    ) -> None:
+        """Scenario: Traversal failure in Workspace.resolve returns MlodyUnresolvedValue.
+
+        Missing field at first segment → MlodyUnresolvedValue, no exception.
+        """
+        from mlody.resolver.label_value import MlodyUnresolvedValue
+
+        entity_mlody = """\
+record_type = Struct(kind="record", name="T", fields=[])
+parent_loc = Struct(kind="posix", type="posix", name="loc", path="root")
+builtins.register("value", Struct(
+    kind="value",
+    name="my_model",
+    type=record_type,
+    location=parent_loc,
+    default=None,
+    source=None,
+    _lineage=[],
+))
+"""
+        root = _make_record_project(fs, entity_mlody)
+        ws = Workspace(monorepo_root=root)
+        ws.load()
+
+        result = ws.resolve("@bert//entity:my_model.ghost_field.sub")
+
+        assert isinstance(result, MlodyUnresolvedValue)
+        assert "ghost_field" in result.reason

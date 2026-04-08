@@ -142,3 +142,9 @@ location(
     },
 )
 
+location(
+    name = "named_arg",
+    attrs = {
+	"flag_name": attr(type="string", mandatory=False),
+    },
+)

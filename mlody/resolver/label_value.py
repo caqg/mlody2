@@ -234,16 +234,106 @@ class _SentinelLabel:
 _SENTINEL_LABEL: "Label" = _SentinelLabel()  # type: ignore[assignment]
 
 
+def _traverse_one_step(
+    current_struct: object,
+    field_name: str,
+    path_so_far: tuple[str, ...],
+    label: "Label",
+) -> tuple[object, bool] | MlodyUnresolvedValue:
+    """Perform one step of record-aware field traversal on a Starlark Struct.
+
+    Encapsulates: fields-list lookup (direct then ``attributes`` dict),
+    direct-type-attribute fallback, ``compose_location()`` call, and Struct
+    rebuild via ``as_mapping()`` with the composed location substituted.
+
+    Args:
+        current_struct: The Starlark Struct for the current traversal level.
+        field_name: The single path segment being resolved at this step.
+        path_so_far: Segments already consumed, used only in error messages.
+        label: The originating Label, used only in error messages.
+
+    Returns:
+        ``(rebuilt_struct, False)`` on success, or ``MlodyUnresolvedValue``
+        on any failure (missing field, ``LocationComposeError``, or non-Struct
+        field_obj which is returned as ``_RawAttrValue``).
+    """
+    from mlody.core.location_composition import (  # noqa: PLC0415
+        LocationComposeError,
+        compose_location,
+    )
+    from starlarkish.core.struct import Struct as _Struct  # noqa: PLC0415
+
+    value_type = getattr(current_struct, "type", None)
+    _SENTINEL = object()
+
+    # Field lookup order:
+    # 1. Search type.fields for a matching entry by name.
+    # 2. Fall back to getattr(value.type, field_name).
+    # 3. If both miss, return MlodyUnresolvedValue.
+    _direct_fields = getattr(value_type, "fields", None)
+    _attrs_dict = getattr(value_type, "attributes", None)
+    _attrs_fields = _attrs_dict.get("fields") if isinstance(_attrs_dict, dict) else None
+    fields_list: list[object] = list(_direct_fields or _attrs_fields or [])
+
+    field_obj: object = _SENTINEL
+    for f in fields_list:
+        if getattr(f, "name", None) == field_name:
+            field_obj = f
+            break
+
+    if field_obj is _SENTINEL:
+        fallback = getattr(value_type, field_name, _SENTINEL)
+        if fallback is _SENTINEL:
+            available = [str(getattr(f, "name", "?")) for f in fields_list]
+            return MlodyUnresolvedValue(
+                label=label,
+                reason=(
+                    f"field {field_name!r} not found on record type "
+                    f"{getattr(value_type, 'name', '?')!r}; "
+                    f"available fields: {available}"
+                ),
+            )
+        # Direct type attribute fallback (non-Struct): return as _RawAttrValue.
+        return _RawAttrValue(value=fallback, label=label)
+
+    parent_loc = getattr(current_struct, "location", None)
+    field_loc = getattr(field_obj, "location", None)
+    try:
+        composed_loc = compose_location(
+            parent_loc=parent_loc,  # type: ignore[arg-type]
+            field_loc=field_loc,  # type: ignore[arg-type]
+            field_name=field_name,
+        )
+    except LocationComposeError as exc:
+        return MlodyUnresolvedValue(label=label, reason=str(exc))
+
+    # Rebuild the field struct with the composed location substituted.
+    # Use as_mapping() (not _fields) to capture every declared field,
+    # including those added via extend_attrs (R-009).
+    if isinstance(field_obj, _Struct):
+        field_map = dict(field_obj.as_mapping())
+        field_map["location"] = composed_loc
+        rebuilt = _Struct(**field_map)
+    else:
+        # Non-Struct field_obj: return as _RawAttrValue consistent with the
+        # existing single-level branch behaviour.
+        return _RawAttrValue(value=field_obj, label=label)
+
+    return (rebuilt, False)
+
+
 class ValueTraversalStrategy:
     """Record-aware traversal strategy for ``kind="value"`` structs.
 
-    When ``path`` has exactly one segment and the value has a record type
-    (``type.kind == "record"`` or ``type._root_kind == "record"``), performs
-    field lookup in ``type.fields`` (with direct-attribute fallback) and
-    composes the parent and field locations via ``compose_location``.
+    When ``path`` is non-empty and the value has a record type
+    (``type.kind == "record"`` or ``type._root_kind == "record"``), applies
+    record-aware field lookup and ``compose_location()`` at every step of the
+    path, accumulating the composed location through all levels.  Uses the
+    shared ``_traverse_one_step`` helper for each step.
 
     For an empty path, wraps the struct as ``MlodyValueValue``.
-    For multi-segment paths, falls back to generic ``getattr`` traversal.
+    For non-record root values, falls back to generic ``getattr`` traversal
+    (the OQ-13 extension seam).
     """
 
     def traverse(
@@ -262,64 +352,44 @@ class ValueTraversalStrategy:
         )
 
         if len(path) == 1 and is_record:
-            from mlody.core.location_composition import (  # noqa: PLC0415
-                LocationComposeError,
-                compose_location,
-            )
+            result = _traverse_one_step(value, path[0], (), label)
+            if isinstance(result, MlodyUnresolvedValue):
+                return result
+            return MlodyValueValue(struct=result[0])
 
-            field_name = path[0]
-            _SENTINEL = object()
-            # fields may be a direct struct field (tests) or inside the
-            # `attributes` dict produced by _make_factory / extend_attrs.
-            _direct_fields = getattr(value_type, "fields", None)
-            _attrs_dict = getattr(value_type, "attributes", None)
-            _attrs_fields = _attrs_dict.get("fields") if isinstance(_attrs_dict, dict) else None
-            fields_list: list[object] = list(_direct_fields or _attrs_fields or [])
-            field_obj: object = _SENTINEL
-            for f in fields_list:
-                if getattr(f, "name", None) == field_name:
-                    field_obj = f
-                    break
-
-            if field_obj is _SENTINEL:
-                fallback = getattr(value_type, field_name, _SENTINEL)
-                if fallback is _SENTINEL:
-                    available = [str(getattr(f, "name", "?")) for f in fields_list]
-                    return MlodyUnresolvedValue(
-                        label=label,
-                        reason=(
-                            f"field {field_name!r} not found on record type "
-                            f"{getattr(value_type, 'name', '?')!r}; "
-                            f"available fields: {available}"
-                        ),
+        if len(path) >= 2 and is_record:
+            current: object = value
+            for i, segment in enumerate(path):
+                step = _traverse_one_step(current, segment, tuple(path[:i]), label)
+                if isinstance(step, MlodyUnresolvedValue):
+                    return step
+                rebuilt, _ = step
+                # After the first step, ``rebuilt`` is a field struct.  For
+                # subsequent steps to use record-aware traversal, the rebuilt
+                # struct must itself be record-typed.  If it is not, the spec
+                # requires MlodyUnresolvedValue naming the non-record intermediate.
+                if i < len(path) - 1:
+                    next_type = getattr(rebuilt, "type", None)
+                    next_is_record = (
+                        getattr(next_type, "kind", None) == "record"
+                        or getattr(next_type, "_root_kind", None) == "record"
                     )
-                return _RawAttrValue(value=fallback, label=label)
+                    if not next_is_record:
+                        type_kind = getattr(next_type, "kind", "<unknown>")
+                        return MlodyUnresolvedValue(
+                            label=label,
+                            reason=(
+                                f"field {segment!r} is not a record type "
+                                f"(got {type_kind!r}); cannot traverse further"
+                            ),
+                        )
+                current = rebuilt
+            return MlodyValueValue(struct=current)
 
-            parent_loc = getattr(value, "location", None)
-            field_loc = getattr(field_obj, "location", None)
-            try:
-                composed_loc = compose_location(
-                    parent_loc=parent_loc,  # type: ignore[arg-type]
-                    field_loc=field_loc,  # type: ignore[arg-type]
-                    field_name=field_name,
-                )
-            except LocationComposeError as exc:
-                return MlodyUnresolvedValue(label=label, reason=str(exc))
-
-            # Return the field struct with the composed location substituted.
-            # field_obj is a Starlark Struct; rebuild with updated location.
-            from starlarkish.core.struct import Struct as _Struct  # noqa: PLC0415
-
-            if isinstance(field_obj, _Struct):
-                field_map = dict(field_obj.as_mapping())
-                field_map["location"] = composed_loc
-                resolved_field = _Struct(**field_map)
-            else:
-                resolved_field = field_obj  # type: ignore[assignment]
-
-            return MlodyValueValue(struct=resolved_field)
-
-        # Multi-segment path or non-record type: generic getattr traversal.
+        # Non-record root or single-segment non-record path: generic getattr
+        # traversal.  This is the OQ-13 extension seam — a future per-kind
+        # traversal dispatch framework would replace this fallback with a
+        # handler registered in a table analogous to _LOCATION_COMPOSERS.
         obj: object = value
         for i, segment in enumerate(path):
             try:

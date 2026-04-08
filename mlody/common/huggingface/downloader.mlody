@@ -10,11 +10,42 @@ typedef(
 )
 
 typedef(
+    name = "pytorch-checkpoint",
+)
+
+YOLO26_SIZES = ["n", "s", "m", "l", "x"]
+YOLO26_TASKS = ["", "-cls", "-seg", "-pose", "-obb"]
+
+def _long_task(task):
+    return {
+	"": "detection",
+	"-cls": "classification",
+	"-seg": "segmentation",
+	"-pose": "pose_estimation",
+	"-obb": "oriented_bounding_boxes",
+    }[task]
+
+def _long_size(size):
+    return {
+	"n": "nano",
+	"s": "small",
+	"m": "medium",
+	"l": "large",
+	"x": "extra_large",
+    }[size]
+
+def yolo26_models():
+    return [
+        value(name = "yolo26_%s_%s" % (_long_size(size), _long_task(task)), type=":pytorch-checkpoint", location = posix(path = "yolo26%s%s.pt" % (size, task)))
+        for size in YOLO26_SIZES
+        for task in YOLO26_TASKS
+    ]
+
+typedef(
     name = "yolo26",		# other versions might be ok, but not all. For instance yolo8 lacks a model_info.json and multiple tasks
     base = record(fields=[
 	value(name = "model_info", type=top(), representation=json(), location=posix(path="model_info.json")),
-#	value(name = "model_variants", type = map()),
-    ]),
+    ] + yolo26_models()),
 )
 
 value(
@@ -22,9 +53,6 @@ value(
     type = ":yolo26",
     location = posix(path="~/.cache/mlody/artifacts/huggingface/Ultralytics/YOLOv26/de6601a0e3575f8968a22a383021d1099d990857"),
 )
-
-def named_arg():
-    return "posix"
 
 value(
     name = "test-model",

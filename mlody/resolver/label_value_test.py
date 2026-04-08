@@ -28,6 +28,7 @@ from mlody.resolver.label_value import (
     MlodyValue,  # noqa: F401 — imported for type annotations in extensibility test
     MlodyValueValue,
     _RawAttrValue,
+    _traverse_one_step,
     resolve_label_to_value,
 )
 
@@ -656,3 +657,327 @@ class TestWildcardGuard:
         label = parse_label("@myroot//pkg/...")
         with pytest.raises(ValueError, match="wildcard"):
             resolve_label_to_value(label, ws)
+
+
+# ---------------------------------------------------------------------------
+# Helpers for _traverse_one_step tests (no Workspace needed)
+# ---------------------------------------------------------------------------
+
+
+def _make_label() -> Any:
+    """Return a minimal label object sufficient for error message construction."""
+    return parse_label("@myroot//pkg/foo:my_value")
+
+
+def _make_struct(**kwargs: object) -> Any:
+    """Construct a Starlark Struct from keyword arguments."""
+    from starlarkish.core.struct import Struct
+
+    return Struct(**kwargs)
+
+
+def _make_loc(path: str) -> Any:
+    """Construct a minimal posix location Struct."""
+    return _make_struct(kind="posix", type="posix", name="loc", path=path)
+
+
+# ---------------------------------------------------------------------------
+# 4.1 Unit tests for _traverse_one_step
+# Scenario: "Successful step returns rebuilt Struct with composed location"
+# Scenario: "All non-location fields are preserved in the rebuilt Struct"
+# Scenario: "Missing field returns MlodyUnresolvedValue"
+# Scenario: "Compose error returns MlodyUnresolvedValue"
+# Scenario: "Non-Struct field_obj skips rebuild and is returned as-is"
+# ---------------------------------------------------------------------------
+
+
+class TestTraverseOneStep:
+    """Requirement: _traverse_one_step shared helper (multi-level-field-traversal spec)."""
+
+    def test_successful_step_returns_rebuilt_struct_with_composed_location(self) -> None:
+        """Scenario: successful step returns rebuilt Struct with composed location."""
+        field_loc = _make_loc("info")
+        field_obj = _make_struct(name="model_info", type=None, location=field_loc)
+        record_type = _make_struct(kind="record", name="ModelType", fields=[field_obj])
+        parent_loc = _make_loc("models/bert")
+        current = _make_struct(
+            kind="value",
+            name="my_model",
+            type=record_type,
+            location=parent_loc,
+        )
+
+        result = _traverse_one_step(current, "model_info", (), _make_label())
+
+        assert isinstance(result, tuple)
+        rebuilt, flag = result
+        assert flag is False
+        loc = getattr(rebuilt, "location", None)
+        assert loc is not None
+        # compose_location joins parent path + field path
+        assert getattr(loc, "path", None) == "models/bert/info"
+
+    def test_all_non_location_fields_preserved_in_rebuilt_struct(self) -> None:
+        """Scenario: all non-location fields are preserved in the rebuilt Struct."""
+        field_loc = _make_loc("a_dir")
+        field_obj = _make_struct(
+            name="field_a",
+            type=None,
+            location=field_loc,
+            kind="value",
+            representation="some_repr",
+        )
+        record_type = _make_struct(kind="record", name="T", fields=[field_obj])
+        parent = _make_struct(
+            kind="value",
+            name="root",
+            type=record_type,
+            location=_make_loc("root"),
+        )
+
+        result = _traverse_one_step(parent, "field_a", (), _make_label())
+
+        assert isinstance(result, tuple)
+        rebuilt, _ = result
+        assert getattr(rebuilt, "name", None) == "field_a"
+        assert getattr(rebuilt, "kind", None) == "value"
+        assert getattr(rebuilt, "representation", None) == "some_repr"
+        assert getattr(rebuilt, "type", None) is None
+
+    def test_missing_field_returns_mlody_unresolved_value(self) -> None:
+        """Scenario: missing field returns MlodyUnresolvedValue listing available fields."""
+        record_type = _make_struct(
+            kind="record", name="ModelType", fields=[_make_struct(name="name", type=None)]
+        )
+        current = _make_struct(
+            kind="value", name="m", type=record_type, location=_make_loc("r")
+        )
+        label = _make_label()
+
+        result = _traverse_one_step(current, "ghost", (), label)
+
+        assert isinstance(result, MlodyUnresolvedValue)
+        assert "ghost" in result.reason
+        assert "name" in result.reason  # available fields listed
+
+    def test_location_compose_error_returns_mlody_unresolved_value(self) -> None:
+        """Scenario: compose error returns MlodyUnresolvedValue with error message."""
+        # Cross-kind locations trigger LocationComposeError.
+        field_loc = _make_struct(kind="s3", type="s3", name="s3_loc", path="bucket/x")
+        field_obj = _make_struct(name="weights", type=None, location=field_loc)
+        record_type = _make_struct(kind="record", name="T", fields=[field_obj])
+        # Parent is posix; field is s3 → cross-kind compose error.
+        parent = _make_struct(
+            kind="value", name="m", type=record_type, location=_make_loc("models")
+        )
+
+        result = _traverse_one_step(parent, "weights", (), _make_label())
+
+        assert isinstance(result, MlodyUnresolvedValue)
+        # reason contains the compose error message
+        assert result.reason
+
+    def test_non_struct_fallback_returns_raw_attr_value(self) -> None:
+        """Scenario: non-Struct field_obj (type attr fallback) returns _RawAttrValue."""
+        # type has a direct attribute "extra" (not in fields list)
+        record_type = _make_struct(kind="record", name="T", fields=[], extra="plain_str")
+        current = _make_struct(
+            kind="value", name="m", type=record_type, location=_make_loc("r")
+        )
+
+        result = _traverse_one_step(current, "extra", (), _make_label())
+
+        assert isinstance(result, _RawAttrValue)
+        assert result.value == "plain_str"
+
+
+# ---------------------------------------------------------------------------
+# 5.x Tests — multi-level traversal in ValueTraversalStrategy
+# ---------------------------------------------------------------------------
+
+
+def _make_value_struct_with_fields(
+    root_loc_path: str,
+    fields: list[Any],
+) -> Any:
+    """Build a value struct with a record type having the given fields."""
+    record_type = _make_struct(kind="record", name="T", fields=fields)
+    return _make_struct(
+        kind="value",
+        name="root",
+        type=record_type,
+        location=_make_loc(root_loc_path),
+    )
+
+
+def _make_field(name: str, loc_path: str | None, child_fields: list[Any] | None = None) -> Any:
+    """Build a field struct.  ``child_fields`` makes the field itself record-typed."""
+    if child_fields is not None:
+        field_type = _make_struct(kind="record", name=f"{name}_type", fields=child_fields)
+    else:
+        field_type = None
+    loc = _make_loc(loc_path) if loc_path is not None else None
+    return _make_struct(name=name, type=field_type, location=loc)
+
+
+class TestValueTraversalStrategyMultiLevel:
+    """Requirement: Multi-step record-aware traversal in ValueTraversalStrategy.
+
+    Scenarios trace to:
+      openspec/changes/mlody-field-traversal-multilevel/specs/multi-level-field-traversal/spec.md
+    """
+
+    def _strategy(self) -> Any:
+        from mlody.resolver.label_value import ValueTraversalStrategy
+
+        return ValueTraversalStrategy()
+
+    def test_two_level_traversal_with_explicit_locations(self) -> None:
+        """Scenario: Two-level traversal with explicit locations at both levels.
+
+        root_loc.path="root/path", field_a.location.path="a_dir",
+        field_b.location.path="b_file" → composed "root/path/a_dir/b_file"
+        """
+        label = _make_label()
+        field_b = _make_field("field_b", "b_file")
+        field_a = _make_field("field_a", "a_dir", child_fields=[field_b])
+        root_value = _make_value_struct_with_fields("root/path", [field_a])
+
+        result = self._strategy().traverse(root_value, ("field_a", "field_b"), label)
+
+        assert isinstance(result, MlodyValueValue)
+        loc = getattr(result.struct, "location", None)
+        assert getattr(loc, "path", None) == "root/path/a_dir/b_file"
+
+    def test_two_level_traversal_intermediate_field_has_no_location(self) -> None:
+        """Scenario: Two-level traversal where intermediate field has no location.
+
+        field_a has no location → field_a name used as path component.
+        Composed path: "root/path/field_a/b_file"
+        """
+        label = _make_label()
+        field_b = _make_field("field_b", "b_file")
+        field_a = _make_field("field_a", None, child_fields=[field_b])
+        root_value = _make_value_struct_with_fields("root/path", [field_a])
+
+        result = self._strategy().traverse(root_value, ("field_a", "field_b"), label)
+
+        assert isinstance(result, MlodyValueValue)
+        loc = getattr(result.struct, "location", None)
+        assert getattr(loc, "path", None) == "root/path/field_a/b_file"
+
+    def test_two_level_traversal_leaf_field_has_no_location(self) -> None:
+        """Scenario: Two-level traversal where leaf field has no location.
+
+        field_b has no location → field_b name appended.
+        Composed path: "root/path/a_dir/field_b"
+        """
+        label = _make_label()
+        field_b = _make_field("field_b", None)
+        field_a = _make_field("field_a", "a_dir", child_fields=[field_b])
+        root_value = _make_value_struct_with_fields("root/path", [field_a])
+
+        result = self._strategy().traverse(root_value, ("field_a", "field_b"), label)
+
+        assert isinstance(result, MlodyValueValue)
+        loc = getattr(result.struct, "location", None)
+        assert getattr(loc, "path", None) == "root/path/a_dir/field_b"
+
+    def test_three_level_traversal_accumulates_locations(self) -> None:
+        """Scenario: Three-level traversal accumulates r/a/b/c."""
+        label = _make_label()
+        field_c = _make_field("field_c", "c")
+        field_b = _make_field("field_b", "b", child_fields=[field_c])
+        field_a = _make_field("field_a", "a", child_fields=[field_b])
+        root_value = _make_value_struct_with_fields("r", [field_a])
+
+        result = self._strategy().traverse(
+            root_value, ("field_a", "field_b", "field_c"), label
+        )
+
+        assert isinstance(result, MlodyValueValue)
+        loc = getattr(result.struct, "location", None)
+        assert getattr(loc, "path", None) == "r/a/b/c"
+
+    def test_non_record_type_at_intermediate_step_returns_unresolved(self) -> None:
+        """Scenario: Non-record type at an intermediate step returns MlodyUnresolvedValue.
+
+        field_a is found but its type.kind is "string" (not "record").
+        """
+        label = _make_label()
+        # field_a has type.kind="string" — not record-typed
+        string_type = _make_struct(kind="string", name="StringType")
+        field_a = _make_struct(name="field_a", type=string_type, location=_make_loc("a"))
+        root_value = _make_value_struct_with_fields("root", [field_a])
+
+        result = self._strategy().traverse(root_value, ("field_a", "field_b"), label)
+
+        assert isinstance(result, MlodyUnresolvedValue)
+        assert "field_a" in result.reason
+        assert "string" in result.reason
+
+    def test_missing_field_at_first_segment_returns_unresolved(self) -> None:
+        """Scenario: Missing field at first segment returns MlodyUnresolvedValue."""
+        label = _make_label()
+        # type.fields is empty — "missing" will not be found
+        root_value = _make_value_struct_with_fields("root", [])
+
+        result = self._strategy().traverse(root_value, ("missing", "field_b"), label)
+
+        assert isinstance(result, MlodyUnresolvedValue)
+        assert "missing" in result.reason
+
+    def test_missing_field_at_second_segment_returns_unresolved(self) -> None:
+        """Scenario: Missing field at second segment returns MlodyUnresolvedValue.
+
+        field_a is found and is record-typed, but "ghost" is absent.
+        """
+        label = _make_label()
+        # field_a is record-typed with no child fields → "ghost" not found
+        field_a = _make_field("field_a", "a", child_fields=[])
+        root_value = _make_value_struct_with_fields("root", [field_a])
+
+        result = self._strategy().traverse(root_value, ("field_a", "ghost"), label)
+
+        assert isinstance(result, MlodyUnresolvedValue)
+        assert "ghost" in result.reason
+
+    def test_location_compose_error_at_intermediate_step_returns_unresolved(
+        self,
+    ) -> None:
+        """Scenario: LocationComposeError at an intermediate step stops traversal.
+
+        field_a has an s3 location; parent has posix location → cross-kind error.
+        field_b step must NOT be attempted.
+        """
+        label = _make_label()
+        field_b = _make_field("field_b", "b")
+        s3_loc = _make_struct(kind="s3", type="s3", name="s3", path="bucket/a")
+        field_b_type = _make_struct(kind="record", name="T", fields=[field_b])
+        field_a = _make_struct(name="field_a", type=field_b_type, location=s3_loc)
+        root_value = _make_value_struct_with_fields("root/posix", [field_a])
+
+        result = self._strategy().traverse(root_value, ("field_a", "field_b"), label)
+
+        assert isinstance(result, MlodyUnresolvedValue)
+        assert result.reason
+
+    def test_non_record_root_multi_segment_uses_getattr_fallback(self) -> None:
+        """Scenario: Non-record root + multi-segment path uses getattr fallback (OQ-13 seam).
+
+        When type.kind != "record", the record loop is NOT activated; the generic
+        getattr fallback is used instead.
+        """
+        label = _make_label()
+        # tensor type — not record
+        tensor_type = _make_struct(kind="tensor", name="TensorType")
+        sub = _make_struct(value=99)
+        root_value = _make_struct(
+            kind="value", name="t", type=tensor_type, location=None, sub=sub
+        )
+
+        result = self._strategy().traverse(root_value, ("sub", "value"), label)
+
+        # getattr fallback resolves sub.value → 99 → _RawAttrValue
+        assert isinstance(result, _RawAttrValue)
+        assert result.value == 99
