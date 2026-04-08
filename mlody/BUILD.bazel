@@ -26,7 +26,11 @@ copybara_workflow(
     ],
     moves = {
         "mlody/EXTERNAL_LICENSE": "LICENSE",
+        "mlody/README.md": "README.md",
     },
+    pr_excludes = [
+        "MODULE.bazel",  # contains elided blocks so for now is a one-way only thing
+    ],
 )
 
 o_py_library(

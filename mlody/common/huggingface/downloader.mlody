@@ -68,6 +68,7 @@ task(
         name    = "downloader-action",
         outputs = [
             # present code add the sha in the code
+	    # NOTE: depending on what we decide, the type might end up be a run-time quantity
             value(name="model", type=":hf-model", location = posix(path="{vendor}/{model}/{sha}")),
         ],
         # NOTE: we don't have them here, but we need a way to specify positional args and their order

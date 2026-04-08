@@ -96,8 +96,8 @@ archive_override(
 archive_override(
     module_name = "aspect_rules_py",
     integrity = "sha256-xnVgCx0NMMy61LPIJ2KbDteH3fYwMDS+l5CU46lHKZo=",
-    patches = ["//build/patches:aspect_rules_py_pex_generated_deps.patch"],
     patch_strip = 1,
+    patches = ["//build/patches:aspect_rules_py_pex_generated_deps.patch"],
     strip_prefix = "rules_py-1.10.0",
     urls = ["https://github.com/aspect-build/rules_py/releases/download/v1.10.0/rules_py-v1.10.0.tar.gz"],
 )
@@ -112,8 +112,8 @@ http_archive(
     build_file_content = 'filegroup(name = "all_srcs", srcs = glob(["**"]), visibility = ["//visibility:public"])',
     patch_args = ["-p1"],
     patches = ["//third_party/whisper/patches:001-cmake-binary-dir.patch"],
+    sha256 = "97f19a32212f2f215e538ee37a16ff547aaebc54817bd8072034e02466ce6d55",
     strip_prefix = "whisper.cpp-1.7.1",  # Match the tag version
     urls = ["https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.7.1.tar.gz"],
-    sha256 = "97f19a32212f2f215e538ee37a16ff547aaebc54817bd8072034e02466ce6d55",
 )
 ##
