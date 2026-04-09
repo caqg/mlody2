@@ -14,6 +14,7 @@ from huggingface_hub import HfApi, model_info
 
 HF_FILE = "https://huggingface.co/{repo}/resolve/{revision}/{path}"
 SEGMENT_SIZE = 64 * 1024 * 1024
+REQUEST_TIMEOUT = (10, 60)
 
 
 # -----------------------------------------
@@ -26,8 +27,9 @@ def measure_bandwidth():
     test_url = "https://huggingface.co/gpt2/resolve/main/config.json"
 
     start = time.time()
-    r = requests.get(test_url)
-    size = len(r.content)
+    with requests.get(test_url, timeout=REQUEST_TIMEOUT) as r:
+        r.raise_for_status()
+        size = len(r.content)
     elapsed = time.time() - start
 
     bps = size / elapsed
@@ -51,6 +53,76 @@ def estimate_workers(gbps):
     return max(4, min(cpu_limit, net_limit))
 
 
+def partial_path(path):
+
+    return path.with_name(f"{path.name}.partial")
+
+
+def partial_metadata_path(path):
+
+    return path.with_name(f"{path.name}.metadata.json")
+
+
+def build_segments(size):
+
+    segments = []
+
+    for start in range(0, size, SEGMENT_SIZE):
+        end = min(start + SEGMENT_SIZE - 1, size - 1)
+        segments.append((start, end))
+
+    return segments
+
+
+def load_partial_metadata(path, size, segment_count):
+
+    metadata_path = partial_metadata_path(path)
+
+    if not path.exists() or not metadata_path.exists():
+        return None
+
+    try:
+        with open(metadata_path) as f:
+            metadata = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    if (
+        metadata.get("size") != size
+        or metadata.get("segment_size") != SEGMENT_SIZE
+        or metadata.get("segment_count") != segment_count
+    ):
+        return None
+
+    completed = metadata.get("completed_segments")
+
+    if not isinstance(completed, list) or len(completed) != segment_count:
+        return None
+
+    if not all(isinstance(value, bool) for value in completed):
+        return None
+
+    return metadata
+
+
+def initialize_partial_state(path, size, segment_count):
+
+    with open(path, "wb") as f:
+        f.truncate(size)
+
+    metadata = {
+        "size": size,
+        "segment_size": SEGMENT_SIZE,
+        "segment_count": segment_count,
+        "completed_segments": [False] * segment_count,
+    }
+
+    with open(partial_metadata_path(path), "w") as f:
+        json.dump(metadata, f)
+
+    return metadata
+
+
 # -----------------------------------------
 # segmented download
 # -----------------------------------------
@@ -63,12 +135,34 @@ def download_segment(url, start, end, path, token):
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    r = requests.get(url, headers=headers, stream=True)
+    expected_size = end - start + 1
+    written = 0
 
-    with open(path, "r+b") as f:
-        f.seek(start)
-        for chunk in r.iter_content(1024 * 1024):
-            f.write(chunk)
+    with requests.get(
+        url,
+        headers=headers,
+        stream=True,
+        timeout=REQUEST_TIMEOUT,
+    ) as r:
+        r.raise_for_status()
+
+        if r.status_code != 206:
+            raise RuntimeError(
+                f"Range request for {path} returned {r.status_code} instead of 206"
+            )
+
+        with open(path, "r+b") as f:
+            f.seek(start)
+            for chunk in r.iter_content(1024 * 1024):
+                if not chunk:
+                    continue
+                f.write(chunk)
+                written += len(chunk)
+
+    if written != expected_size:
+        raise RuntimeError(
+            f"Segment {start}-{end} for {path} wrote {written} bytes, expected {expected_size}"
+        )
 
 
 def segmented_download(url, dest, token, workers):
@@ -77,29 +171,39 @@ def segmented_download(url, dest, token, workers):
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    r = requests.head(url, headers=headers)
+    r = requests.head(
+        url,
+        headers=headers,
+        allow_redirects=True,
+        timeout=REQUEST_TIMEOUT,
+    )
+    r.raise_for_status()
     size = int(r.headers["Content-Length"])
 
-    if dest.exists() and dest.stat().st_size == size:
-        return
+    segments = build_segments(size)
+    metadata = load_partial_metadata(dest, size, len(segments))
 
-    with open(dest, "wb") as f:
-        f.truncate(size)
+    if metadata is None:
+        metadata = initialize_partial_state(dest, size, len(segments))
 
-    segments = []
-
-    for start in range(0, size, SEGMENT_SIZE):
-        end = min(start + SEGMENT_SIZE - 1, size - 1)
-        segments.append((start, end))
+    pending_segments = [
+        (index, start, end)
+        for index, (start, end) in enumerate(segments)
+        if not metadata["completed_segments"][index]
+    ]
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = []
+        futures = {}
 
-        for start, end in segments:
-            futures.append(pool.submit(download_segment, url, start, end, dest, token))
+        for index, start, end in pending_segments:
+            future = pool.submit(download_segment, url, start, end, dest, token)
+            futures[future] = index
 
-        for f in futures:
-            f.result()
+        for future in concurrent.futures.as_completed(futures):
+            future.result()
+            metadata["completed_segments"][futures[future]] = True
+            with open(partial_metadata_path(dest), "w") as f:
+                json.dump(metadata, f)
 
 
 # -----------------------------------------
@@ -118,16 +222,43 @@ def download_file(repo, revision, file_path, dest, token, workers):
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    r = requests.head(url, headers=headers)
+    r = requests.head(
+        url,
+        headers=headers,
+        allow_redirects=True,
+        timeout=REQUEST_TIMEOUT,
+    )
+    r.raise_for_status()
     size = int(r.headers.get("Content-Length", 0))
+    partial_out = partial_path(out)
+    metadata_path = partial_metadata_path(partial_out)
+
+    if out.exists() and out.stat().st_size == size:
+        if partial_out.exists():
+            partial_out.unlink()
+        if metadata_path.exists():
+            metadata_path.unlink()
+        return
 
     if size > 200 * 1024 * 1024:
-        segmented_download(url, out, token, workers)
+        segmented_download(url, partial_out, token, workers)
     else:
-        with requests.get(url, headers=headers, stream=True) as r:
-            with open(out, "wb") as f:
+        with requests.get(
+            url,
+            headers=headers,
+            stream=True,
+            timeout=REQUEST_TIMEOUT,
+        ) as r:
+            r.raise_for_status()
+            with open(partial_out, "wb") as f:
                 for chunk in r.iter_content(1024 * 1024):
+                    if not chunk:
+                        continue
                     f.write(chunk)
+
+    os.replace(partial_out, out)
+    if metadata_path.exists():
+        metadata_path.unlink()
 
 
 # -----------------------------------------
