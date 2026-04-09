@@ -1,0 +1,39 @@
+load("//build/bzl:python.bzl", "o_py_binary", "o_py_library", "o_py_test")
+
+o_py_library(
+    name = "sonora_speak_lib",
+    srcs = [
+        "__init__.py",
+        "runtime.py",
+        "speak.py",
+    ],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "@pip//click",
+        "@pip//kokoro",
+        "@pip//numpy",
+    ],
+)
+
+o_py_binary(
+    name = "sonora_speak",
+    srcs = ["speak.py"],
+    main = "speak.py",
+    package_collisions = "warning",
+    visibility = ["//visibility:public"],
+    deps = [":sonora_speak_lib"],
+)
+
+o_py_test(
+    name = "sonora_speak_test",
+    package_collisions = "warning",
+    srcs = [
+        "runtime_test.py",
+        "speak_test.py",
+    ],
+    deps = [
+        ":sonora_speak_lib",
+        "@pip//click",
+        "@pip//numpy",
+    ],
+)

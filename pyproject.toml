@@ -85,6 +85,11 @@ dependencies = [
   # realtime landmark inference for face and full-body pose.
   # See: https://ai.google.dev/edge/mediapipe
   "mediapipe",
+  # Kokoro text-to-speech inference pipeline.
+  # See: https://pypi.org/project/kokoro/
+  # Keep Kokoro and Misaki pinned to the latest pair that supports Python 3.13.
+  "kokoro>=0.7.4,<0.7.5",
+  "misaki[en]>=0.7.4,<0.7.5",
 ]
 
 # See https://docs.astral.sh/ruff/configuration/
