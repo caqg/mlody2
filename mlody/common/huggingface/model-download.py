@@ -23,7 +23,6 @@ REQUEST_TIMEOUT = (10, 60)
 
 
 def measure_bandwidth():
-
     test_url = "https://huggingface.co/gpt2/resolve/main/config.json"
 
     start = time.time()
@@ -44,7 +43,6 @@ def measure_bandwidth():
 
 
 def estimate_workers(gbps):
-
     cores = multiprocessing.cpu_count()
 
     cpu_limit = cores * 4
@@ -54,17 +52,14 @@ def estimate_workers(gbps):
 
 
 def partial_path(path):
-
     return path.with_name(f"{path.name}.partial")
 
 
 def partial_metadata_path(path):
-
     return path.with_name(f"{path.name}.metadata.json")
 
 
 def build_segments(size):
-
     segments = []
 
     for start in range(0, size, SEGMENT_SIZE):
@@ -75,7 +70,6 @@ def build_segments(size):
 
 
 def load_partial_metadata(path, size, segment_count):
-
     metadata_path = partial_metadata_path(path)
 
     if not path.exists() or not metadata_path.exists():
@@ -106,7 +100,6 @@ def load_partial_metadata(path, size, segment_count):
 
 
 def initialize_partial_state(path, size, segment_count):
-
     with open(path, "wb") as f:
         f.truncate(size)
 
@@ -129,7 +122,6 @@ def initialize_partial_state(path, size, segment_count):
 
 
 def download_segment(url, start, end, path, token):
-
     headers = {"Range": f"bytes={start}-{end}"}
 
     if token:
@@ -166,7 +158,6 @@ def download_segment(url, start, end, path, token):
 
 
 def segmented_download(url, dest, token, workers):
-
     headers = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -212,7 +203,6 @@ def segmented_download(url, dest, token, workers):
 
 
 def download_file(repo, revision, file_path, dest, token, workers):
-
     url = HF_FILE.format(repo=repo, revision=revision, path=file_path)
 
     out = dest / file_path
@@ -267,7 +257,6 @@ def download_file(repo, revision, file_path, dest, token, workers):
 
 
 def download_repo(repo, revision, dest, files, workers, token):
-
     dest.mkdir(parents=True, exist_ok=True)
 
     start = time.time()
@@ -289,7 +278,6 @@ def download_repo(repo, revision, dest, files, workers, token):
 
 
 def list_tags(repo, token):
-
     api = HfApi(token=token)
     refs = api.list_repo_refs(repo_id=repo, repo_type="model")
 
@@ -308,7 +296,6 @@ def list_tags(repo, token):
 
 
 def list_refs(repo, token):
-
     api = HfApi(token=token)
     refs = api.list_repo_refs(repo_id=repo, repo_type="model")
 
@@ -344,13 +331,12 @@ def list_refs(repo, token):
 
 
 def main():
-
     p = argparse.ArgumentParser()
     subparsers = p.add_subparsers(dest="command")
 
     p_download = subparsers.add_parser("download", help="Download a model snapshot")
     p_download.add_argument("repo")
-    p_download.add_argument("-o", "--out", default="models")
+    p_download.add_argument("-o", "--out", default=None)
     p_download.add_argument("-w", "--workers", type=int)
     p_download.add_argument(
         "-r",
@@ -401,7 +387,15 @@ def main():
 
     repo = args.repo
     requested_revision = args.revision
-    base_out = Path(args.out)
+    if args.out is None:
+        vendor, model = repo.split("/")
+        base_out = Path(
+            f"~/.cache/mlody/artifacts/huggingface/{vendor}/{model}"
+        ).expanduser()
+    else:
+        base_out = Path(args.out)
+
+    print(f"base_out: {base_out}")
 
     print("Fetching model info...")
 
