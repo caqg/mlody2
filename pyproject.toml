@@ -76,6 +76,15 @@ dependencies = [
   # Qt backend for matplotlib GUI window (precompiled wheels, no C compilation).
   # See: https://pypi.org/project/PyQt6/
   "PyQt6",
+  # vectorized matrix math for calibration and geometry reconstruction.
+  # See: https://numpy.org/
+  "numpy",
+  # webcam capture, calibration parsing, GUI display, and pose solving.
+  # See: https://opencv.org/
+  "opencv-python",
+  # realtime landmark inference for face and full-body pose.
+  # See: https://ai.google.dev/edge/mediapipe
+  "mediapipe",
 ]
 
 # See https://docs.astral.sh/ruff/configuration/

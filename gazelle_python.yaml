@@ -151,6 +151,7 @@ manifest:
     PyQt6.Qt6.qml.QtWebChannel.libwebchannelquickplugin: pyqt6_qt6
     PyQt6.Qt6.qml.QtWebSockets.libqmlwebsocketsplugin: pyqt6_qt6
     PyQt6.sip: pyqt6_sip
+    absl: absl_py
     annotated_doc: annotated_doc
     annotated_types: annotated_types
     anyio: anyio
@@ -160,16 +161,19 @@ manifest:
     cattr: cattrs
     cattrs: cattrs
     certifi: certifi
+    cffi: cffi
     charset_normalizer: charset_normalizer
     click: click
     colorama: colorama
     contourpy: contourpy
     copier: copier
+    cv2: opencv_python
     cycler: cycler
     dateutil: python_dateutil
     debugpy: debugpy
     dunamai: dunamai
     filelock: filelock
+    flatbuffers: flatbuffers
     fontTools: fonttools
     fsspec: fsspec
     funcy: funcy
@@ -192,11 +196,14 @@ manifest:
     markupsafe: markupsafe
     matplotlib: matplotlib
     mdurl: mdurl
+    mediapipe: mediapipe
     mpl_toolkits.axes_grid1: matplotlib
     mpl_toolkits.axisartist: matplotlib
     mpl_toolkits.mplot3d: matplotlib
     networkx: networkx
     numpy: numpy
+    opencv_contrib_python.libs.libopenblasp-r0-59ffcd50: opencv_contrib_python
+    opencv_python.libs.libopenblasp-r0-59ffcd50: opencv_python
     packaging: packaging
     parso: parso
     pathspec: pathspec
@@ -207,6 +214,7 @@ manifest:
     ptpython: ptpython
     py: pytest
     pycdlib: pycdlib
+    pycparser: pycparser
     pydantic: pydantic
     pydantic_core: pydantic_core
     pyfakefs: pyfakefs
@@ -223,6 +231,7 @@ manifest:
     shellingham: shellingham
     six: six
     smmap: smmap
+    sounddevice: sounddevice
     tqdm: tqdm
     tree_sitter: tree_sitter
     tree_sitter_starlark: tree_sitter_starlark

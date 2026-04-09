@@ -1,0 +1,61 @@
+load("//build/bzl:python.bzl", "o_py_binary", "o_py_library", "o_py_test")
+
+o_py_library(
+    name = "framera_lib",
+    srcs = [
+        "__init__.py",
+        "calibration.py",
+        "camera_calibrate.py",
+        "geometry.py",
+        "mediapipe_adapter.py",
+        "pose_estimator.py",
+        "runtime.py",
+        "schema.py",
+    ],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "@pip//click",
+        "@pip//mediapipe",
+        "@pip//numpy",
+        "@pip//opencv_python",
+    ],
+)
+
+o_py_binary(
+    name = "framera_pose_estimator",
+    srcs = ["pose-estimator.py"],
+    main = "pose-estimator.py",
+    package_collisions = "warning",
+    visibility = ["//visibility:public"],
+    deps = [":framera_lib"],
+)
+
+o_py_binary(
+    name = "framera_camera_calibrate",
+    srcs = ["calibrate-camera.py"],
+    data = ["calibration-chessboard-9x6-25mm.svg"],
+    main = "calibrate-camera.py",
+    package_collisions = "warning",
+    visibility = ["//visibility:public"],
+    deps = [":framera_lib"],
+)
+
+o_py_test(
+    name = "framera_test",
+    package_collisions = "warning",
+    srcs = [
+        "calibration_test.py",
+        "camera_calibrate_test.py",
+        "geometry_test.py",
+        "mediapipe_adapter_test.py",
+        "pose_estimator_test.py",
+        "runtime_test.py",
+        "schema_test.py",
+    ],
+    deps = [
+        ":framera_lib",
+        "@pip//click",
+        "@pip//numpy",
+    ],
+    visibility = ["//visibility:public"],
+)
