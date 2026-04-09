@@ -43,7 +43,6 @@ def test_tracker_raises_clear_error_when_tasks_only_and_model_missing() -> None:
 def test_tracker_requires_hand_model_for_split_tasks_hands() -> None:
     tracker = MediaPipeTracker(
         face_model_path="face.task",
-        pose_model_path="pose.task",
         hands_enabled=True,
     )
 
@@ -53,3 +52,41 @@ def test_tracker_requires_hand_model_for_split_tasks_hands() -> None:
     ):
         with pytest.raises(RuntimeError, match="--hand-model"):
             tracker.__enter__()
+
+
+def test_tracker_requires_pose_model_when_body_enabled() -> None:
+    tracker = MediaPipeTracker(
+        face_model_path="face.task",
+        body_enabled=True,
+    )
+
+    with patch(
+        "mediapipe_adapter._try_load_mediapipe_solutions",
+        return_value=None,
+    ):
+        with pytest.raises(RuntimeError, match="--pose-model"):
+            tracker.__enter__()
+
+
+def test_tracker_ignores_unused_pose_and_hand_models_without_flags() -> None:
+    tracker = MediaPipeTracker(
+        face_model_path="face.task",
+        pose_model_path="pose.task",
+        hand_model_path="hand.task",
+        body_enabled=False,
+        hands_enabled=False,
+    )
+
+    with (
+        patch("mediapipe_adapter._try_load_mediapipe_solutions", return_value=None),
+        patch("mediapipe_adapter._import_mediapipe", return_value=object()),
+        patch("mediapipe_adapter._create_task_face_landmarker", return_value=object()) as face_mock,
+        patch("mediapipe_adapter._create_task_pose_landmarker") as pose_mock,
+        patch("mediapipe_adapter._create_task_hand_landmarker") as hand_mock,
+    ):
+        entered = tracker.__enter__()
+
+    assert entered is tracker
+    face_mock.assert_called_once()
+    pose_mock.assert_not_called()
+    hand_mock.assert_not_called()

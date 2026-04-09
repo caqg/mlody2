@@ -47,6 +47,7 @@ class MediaPipeTracker:
         face_model_path: str | None = None,
         pose_model_path: str | None = None,
         hand_model_path: str | None = None,
+        body_enabled: bool = False,
         hands_enabled: bool = False,
         use_gpu: bool = False,
         min_detection_confidence: float = 0.5,
@@ -56,6 +57,7 @@ class MediaPipeTracker:
         self._face_model_path = face_model_path
         self._pose_model_path = pose_model_path
         self._hand_model_path = hand_model_path
+        self._body_enabled = body_enabled
         self._hands_enabled = hands_enabled
         self._use_gpu = use_gpu
         self._min_detection_confidence = min_detection_confidence
@@ -81,24 +83,26 @@ class MediaPipeTracker:
             )
             return self
 
-        if (self._face_model_path is None) != (self._pose_model_path is None):
-            raise RuntimeError("face_model_path and pose_model_path must be provided together.")
-
-        if self._face_model_path is not None and self._pose_model_path is not None:
+        if self._face_model_path is not None:
+            if self._body_enabled and self._pose_model_path is None:
+                raise RuntimeError(
+                    "The Tasks backend requires --pose-model when --body is enabled."
+                )
             if self._hands_enabled and self._hand_model_path is None:
                 raise RuntimeError(
-                    "The split Tasks backend requires --hand-model when --hands is enabled."
+                    "The Tasks backend requires --hand-model when --hands is enabled."
                 )
-            self._backend = "tasks_split"
+            self._backend = "tasks_components"
             self._tasks_mp = _import_mediapipe()
             self._face_landmarker = _create_task_face_landmarker(
                 model_path=self._face_model_path,
                 use_gpu=self._use_gpu,
             )
-            self._pose_landmarker = _create_task_pose_landmarker(
-                model_path=self._pose_model_path,
-                use_gpu=self._use_gpu,
-            )
+            if self._body_enabled and self._pose_model_path is not None:
+                self._pose_landmarker = _create_task_pose_landmarker(
+                    model_path=self._pose_model_path,
+                    use_gpu=self._use_gpu,
+                )
             if self._hands_enabled and self._hand_model_path is not None:
                 self._hand_landmarker = _create_task_hand_landmarker(
                     model_path=self._hand_model_path,
@@ -109,7 +113,8 @@ class MediaPipeTracker:
         if self._holistic_model_path is None:
             raise RuntimeError(
                 "The installed mediapipe wheel exposes only the Tasks API. "
-                "Pass --face-model and --pose-model together, or "
+                "Pass --face-model, plus --body with --pose-model and/or --hands "
+                "with --hand-model as needed, or "
                 "--holistic-model /path/to/holistic_landmarker.task."
             )
 
@@ -140,8 +145,8 @@ class MediaPipeTracker:
 
     def process(self, frame_bgr: npt.NDArray[object]) -> TrackingResult:
         """Run MediaPipe on one BGR frame."""
-        if self._backend == "tasks_split":
-            if self._face_landmarker is None or self._pose_landmarker is None:
+        if self._backend == "tasks_components":
+            if self._face_landmarker is None:
                 raise RuntimeError("MediaPipeTracker must be entered before use")
         elif self._holistic is None:
             raise RuntimeError("MediaPipeTracker must be entered before use")
@@ -151,42 +156,69 @@ class MediaPipeTracker:
             results = self._holistic.process(frame_rgb)
             return TrackingResult(
                 face_landmarks=_convert_landmarks(results.face_landmarks),
-                pose_landmarks=_convert_landmarks(results.pose_landmarks),
-                pose_world_landmarks=_convert_landmarks(results.pose_world_landmarks),
+                pose_landmarks=(
+                    _convert_landmarks(results.pose_landmarks) if self._body_enabled else ()
+                ),
+                pose_world_landmarks=(
+                    _convert_landmarks(results.pose_world_landmarks)
+                    if self._body_enabled
+                    else ()
+                ),
                 left_hand_landmarks=_convert_landmarks(
                     getattr(results, "left_hand_landmarks", None)
-                ),
+                )
+                if self._hands_enabled
+                else (),
                 left_hand_world_landmarks=_convert_landmarks(
                     getattr(results, "left_hand_world_landmarks", None)
-                ),
+                )
+                if self._hands_enabled
+                else (),
                 right_hand_landmarks=_convert_landmarks(
                     getattr(results, "right_hand_landmarks", None)
-                ),
+                )
+                if self._hands_enabled
+                else (),
                 right_hand_world_landmarks=_convert_landmarks(
                     getattr(results, "right_hand_world_landmarks", None)
-                ),
+                )
+                if self._hands_enabled
+                else (),
                 raw_face_landmarks=results.face_landmarks,
-                raw_pose_landmarks=results.pose_landmarks,
-                raw_left_hand_landmarks=getattr(results, "left_hand_landmarks", None),
-                raw_right_hand_landmarks=getattr(results, "right_hand_landmarks", None),
+                raw_pose_landmarks=results.pose_landmarks if self._body_enabled else None,
+                raw_left_hand_landmarks=(
+                    getattr(results, "left_hand_landmarks", None) if self._hands_enabled else None
+                ),
+                raw_right_hand_landmarks=(
+                    getattr(results, "right_hand_landmarks", None)
+                    if self._hands_enabled
+                    else None
+                ),
             )
 
-        if self._backend == "tasks_split":
-            if self._tasks_mp is None or self._face_landmarker is None or self._pose_landmarker is None:
-                raise RuntimeError("Split Tasks MediaPipe backend was not initialized")
+        if self._backend == "tasks_components":
+            if self._tasks_mp is None or self._face_landmarker is None:
+                raise RuntimeError("Tasks MediaPipe backend was not initialized")
             mp_image = self._tasks_mp.Image(
                 image_format=self._tasks_mp.ImageFormat.SRGB,
                 data=frame_rgb,
             )
             face_result = self._face_landmarker.detect(mp_image)
-            pose_result = self._pose_landmarker.detect(mp_image)
             face_landmarks = face_result.face_landmarks[0] if face_result.face_landmarks else []
-            pose_landmarks = pose_result.pose_landmarks[0] if pose_result.pose_landmarks else []
-            pose_world_landmarks = (
-                pose_result.pose_world_landmarks[0]
-                if pose_result.pose_world_landmarks
-                else []
-            )
+            pose_landmarks: object = []
+            pose_world_landmarks: object = []
+            raw_pose_landmarks: object | None = None
+            if self._body_enabled and self._pose_landmarker is not None:
+                pose_result = self._pose_landmarker.detect(mp_image)
+                pose_landmarks = (
+                    pose_result.pose_landmarks[0] if pose_result.pose_landmarks else []
+                )
+                pose_world_landmarks = (
+                    pose_result.pose_world_landmarks[0]
+                    if pose_result.pose_world_landmarks
+                    else []
+                )
+                raw_pose_landmarks = pose_landmarks
             left_hand_landmarks = ()
             left_hand_world_landmarks = ()
             right_hand_landmarks = ()
@@ -215,7 +247,7 @@ class MediaPipeTracker:
                 right_hand_landmarks=right_hand_landmarks,
                 right_hand_world_landmarks=right_hand_world_landmarks,
                 raw_face_landmarks=face_landmarks,
-                raw_pose_landmarks=pose_landmarks,
+                raw_pose_landmarks=raw_pose_landmarks,
                 raw_left_hand_landmarks=raw_left_hand_landmarks,
                 raw_right_hand_landmarks=raw_right_hand_landmarks,
             )
@@ -230,24 +262,44 @@ class MediaPipeTracker:
             result = self._holistic.detect(mp_image)
             return TrackingResult(
                 face_landmarks=_convert_landmarks(result.face_landmarks),
-                pose_landmarks=_convert_landmarks(result.pose_landmarks),
-                pose_world_landmarks=_convert_landmarks(result.pose_world_landmarks),
+                pose_landmarks=(
+                    _convert_landmarks(result.pose_landmarks) if self._body_enabled else ()
+                ),
+                pose_world_landmarks=(
+                    _convert_landmarks(result.pose_world_landmarks)
+                    if self._body_enabled
+                    else ()
+                ),
                 left_hand_landmarks=_convert_landmarks(
                     getattr(result, "left_hand_landmarks", None)
-                ),
+                )
+                if self._hands_enabled
+                else (),
                 left_hand_world_landmarks=_convert_landmarks(
                     getattr(result, "left_hand_world_landmarks", None)
-                ),
+                )
+                if self._hands_enabled
+                else (),
                 right_hand_landmarks=_convert_landmarks(
                     getattr(result, "right_hand_landmarks", None)
-                ),
+                )
+                if self._hands_enabled
+                else (),
                 right_hand_world_landmarks=_convert_landmarks(
                     getattr(result, "right_hand_world_landmarks", None)
-                ),
+                )
+                if self._hands_enabled
+                else (),
                 raw_face_landmarks=result.face_landmarks,
-                raw_pose_landmarks=result.pose_landmarks,
-                raw_left_hand_landmarks=getattr(result, "left_hand_landmarks", None),
-                raw_right_hand_landmarks=getattr(result, "right_hand_landmarks", None),
+                raw_pose_landmarks=result.pose_landmarks if self._body_enabled else None,
+                raw_left_hand_landmarks=(
+                    getattr(result, "left_hand_landmarks", None) if self._hands_enabled else None
+                ),
+                raw_right_hand_landmarks=(
+                    getattr(result, "right_hand_landmarks", None)
+                    if self._hands_enabled
+                    else None
+                ),
             )
 
         raise RuntimeError("MediaPipeTracker backend was not initialized")
@@ -260,8 +312,8 @@ class MediaPipeTracker:
         overlay_lines: tuple[str, ...],
     ) -> npt.NDArray[object]:
         """Draw landmarks and status text on a BGR frame."""
-        if self._backend == "tasks_split":
-            if self._face_landmarker is None or self._pose_landmarker is None:
+        if self._backend == "tasks_components":
+            if self._face_landmarker is None:
                 raise RuntimeError("MediaPipeTracker must be entered before drawing")
         elif self._holistic is None:
             raise RuntimeError("MediaPipeTracker must be entered before drawing")

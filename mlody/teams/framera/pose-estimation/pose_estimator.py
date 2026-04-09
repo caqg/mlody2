@@ -40,6 +40,12 @@ from runtime import SessionConfig, run_camera_session
     help="Optional path to a MediaPipe face_landmarker.task model.",
 )
 @click.option(
+    "--body",
+    is_flag=True,
+    default=False,
+    help="Enable body pose estimation and overlay output.",
+)
+@click.option(
     "--pose-model",
     type=click.Path(path_type=Path, dir_okay=False, exists=True, readable=True),
     default=None,
@@ -80,6 +86,7 @@ def cli(
     calibration: Path,
     holistic_model: Path | None,
     face_model: Path | None,
+    body: bool,
     pose_model: Path | None,
     hands: bool,
     hand_model: Path | None,
@@ -88,10 +95,6 @@ def cli(
     gui: bool,
 ) -> None:
     """Run realtime face landmarking and pose estimation from a webcam."""
-    if (face_model is None) != (pose_model is None):
-        raise click.ClickException("--face-model and --pose-model must be provided together.")
-    if hand_model is not None and not hands:
-        raise click.ClickException("--hand-model requires --hands.")
     config = SessionConfig(
         device=device,
         width=width,
@@ -101,6 +104,7 @@ def cli(
         emit_json=not no_json,
         gui=gui,
         gpu=gpu,
+        body=body,
         hands=hands,
         calibration_path=calibration,
         holistic_model_path=holistic_model,

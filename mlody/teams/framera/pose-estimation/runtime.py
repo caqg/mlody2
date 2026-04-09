@@ -30,6 +30,7 @@ class SessionConfig:
     emit_json: bool
     gui: bool
     gpu: bool
+    body: bool
     hands: bool
     calibration_path: Path
     holistic_model_path: Path | None = None
@@ -128,6 +129,7 @@ def run_camera_session(*, config: SessionConfig) -> None:
                 if config.hand_model_path is not None
                 else None
             ),
+            body_enabled=config.body,
             hands_enabled=config.hands,
             use_gpu=config.gpu,
         ) as tracker:
@@ -147,6 +149,8 @@ def run_camera_session(*, config: SessionConfig) -> None:
                         pose_landmarks=result.pose_landmarks,
                         pose_world_landmarks=result.pose_world_landmarks,
                     )
+                    if config.body
+                    else ((), False, ())
                 )
                 face_landmarks, face_degraded, face_warnings = (
                     reconstruct_face_landmarks_camera_space(
