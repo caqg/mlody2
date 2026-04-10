@@ -27,8 +27,8 @@ include("//build/modules:python.MODULE.bazel")
 
 ####
 # OCI image building (rules_oci + rules_pkg) — required by mlody-image-builder
-bazel_dep(name = "rules_oci", version = "2.0.0")
-bazel_dep(name = "rules_pkg", version = "1.0.1")
+bazel_dep(name = "rules_oci", version = "2.3.0")
+bazel_dep(name = "rules_pkg", version = "1.2.0")
 
 oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
 oci.pull(
