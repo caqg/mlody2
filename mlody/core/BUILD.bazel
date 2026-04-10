@@ -153,3 +153,17 @@ o_py_test(
         "@pip//pytest",
     ],
 )
+
+o_py_test(
+    name = "rule_test",
+    srcs = ["rule_test.py"],
+    data = [
+        "rule.mlody",  # keep — read at import time by test
+        "//mlody/common:attrs.mlody",  # keep — read at import time by test
+    ],
+    deps = [
+        "//common/python/starlarkish",
+        "//common/python/starlarkish/evaluator:evaluator_lib",
+        "@pip//pytest",
+    ],
+)

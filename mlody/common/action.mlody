@@ -227,7 +227,6 @@ action = rule(
     implementation = _action_impl,
     kind           = "action",
     attrs          = {
-        "name":    attr(type="string"),
         "inputs":  attr(type="value_ref_list", mandatory=False),
         "outputs": attr(type="value_ref_list"),
         "config":  attr(type="value_ref_list", mandatory=False),

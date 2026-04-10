@@ -92,8 +92,6 @@ location = rule(
     implementation=_location_impl,
     kind='location',
     attrs={
-        "name":        attr(type="string"),
-        "description": attr(type="string",   mandatory=False),
         "base":        attr(type="location", mandatory=False, default=None),
         "attrs":       attr(type="dict",     mandatory=False, default=None),
         "predicate":   attr(type="callable", mandatory=False, default=None),

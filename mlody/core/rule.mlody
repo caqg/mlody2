@@ -2,6 +2,44 @@
 # This dummy assignment is to satisfy the linter.
 ctx = None
 
+# Inline dict literals matching the format that attr() in attrs.mlody returns:
+#   {"type": <string>, "metadata": {"mandatory": <bool>, "default": <value>}}
+# We cannot call attr() here because rule.mlody must not load() attrs.mlody —
+# doing so would create a circular dependency (rule files load both). If the
+# attr() return shape changes, update both sides; they live in the same codebase.
+_COMMON_ATTRS = {
+    "name": {
+        "type": "string",
+        "metadata": {"mandatory": True, "default": None},
+    },
+    "description": {
+        "type": "string",
+        "metadata": {"mandatory": False, "default": ""},
+    },
+}
+
+
+def _validate_name(name):
+    if name == "":
+        raise ValueError("'name' must not be empty")
+    # NOTE: The spec requires [a-zA-Z0-9_] only, but built-in system types and
+    # locations (e.g. "mlody-workspace", "mlody-task") use hyphens. Hyphens are
+    # allowed here to preserve backward compatibility with those identifiers.
+    # User-authored pipeline names (tasks, actions, values) should avoid hyphens;
+    # this will be enforced by a follow-on lint rule rather than here.
+    for ch in name:
+        if not (
+            (ch >= "a" and ch <= "z")
+            or (ch >= "A" and ch <= "Z")
+            or (ch >= "0" and ch <= "9")
+            or ch == "_"
+            or ch == "-"
+        ):
+            raise ValueError(
+                "Invalid 'name' value: " + repr(name)
+                + ". Only [a-zA-Z0-9_-] characters are allowed."
+            )
+
 
 def _validate_attr_definitions(defs):
     return True
@@ -32,9 +70,30 @@ def _resolve_references(args, attrs):
 
 def rule(*, implementation, kind, attrs=None):
     # state is used to workaround the absence of nonlocal. Why it works, I don't know
-    state = {"attrs": attrs} # in starlark this would be a struct
+    effective_attrs = attrs if attrs != None else {}
+
+    # Detect conflicts at definition time so broken rule files never load silently.
+    conflicts = [k for k in _COMMON_ATTRS if k in effective_attrs]
+    if conflicts:
+        raise ValueError(
+            "Conflicting attr keys with _COMMON_ATTRS: " + repr(conflicts)
+        )
+
+    # Merge: _COMMON_ATTRS as base so callers win after the conflict guard,
+    # consistent with Bazel's own rule(attrs) merging convention.
+    merged = dict(_COMMON_ATTRS)
+    merged.update(effective_attrs)
+
+    state = {"attrs": merged} # in starlark this would be a struct
     def f(**kwargs):
         _validate_args(kwargs, state['attrs'])
+        # Fill in defaults for optional attrs that the caller omitted.
+        for attr_name, definition in state['attrs'].items():
+            if attr_name not in kwargs:
+                default_val = definition['metadata']['default']
+                if default_val != None:
+                    kwargs[attr_name] = default_val
+        _validate_name(kwargs["name"])
         _resolve_references(kwargs, state['attrs'])
         ctx = struct(kind=kind, attr=struct(**kwargs))
         thing = implementation(ctx)

@@ -193,8 +193,6 @@ typedef = rule(
     implementation=_type_impl,
     kind='type',
     attrs={
-        "name":        attr(type="string"),
-        "description": attr(type="string",     mandatory=False),
         "base":        attr(type="type",       mandatory=False, default=None),
         "attrs":       attr(type="dict",       mandatory=False, default=None),
         "predicate":   attr(type="callable",   mandatory=False, default=None),

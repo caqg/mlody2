@@ -19,9 +19,7 @@ def _representation_impl(ctx):
 representation = rule(
     implementation=_representation_impl,
     kind="representation",
-    attrs={
-        "name": attr(type="string"),
-    },
+    attrs={},
 )
 
 _json_struct = representation(name="json")

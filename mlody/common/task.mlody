@@ -238,7 +238,6 @@ task = rule(
     implementation = _task_impl,
     kind           = "task",
     attrs          = {
-        "name":    attr(type="string"),
         "inputs":  attr(type="value_ref_list", mandatory=False),
         "outputs": attr(type="value_ref_list"),
         "action":  attr(type="action_ref"),

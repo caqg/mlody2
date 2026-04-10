@@ -96,7 +96,6 @@ value = rule(
     implementation=_value_impl,
     kind="value",
     attrs={
-        "name":           attr(type="string"),
         "type":           attr(type="type_ref", mandatory=False),
         "location":       attr(type="location_ref", mandatory=False),
         "default":        attr(mandatory=False),
