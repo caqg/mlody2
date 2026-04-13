@@ -1,0 +1,40 @@
+load("//build/bzl:python.bzl", "o_py_binary", "o_py_library", "o_py_test")
+
+o_py_library(
+    name = "runner_lib",
+    srcs = ["runner.py"],
+    visibility = ["//:__subpackages__"],
+)
+
+o_py_library(
+    name = "kind_cluster_lib",
+    srcs = [
+        "__init__.py",
+        "kind_cluster.py",
+    ],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":runner_lib",
+        "@pip//click",
+        "@pip//pyyaml",
+        "@pip//rich",
+    ],
+)
+
+o_py_binary(
+    name = "o-mlody-cluster",
+    srcs = ["kind_cluster.py"],
+    main = "kind_cluster.py",
+    package_collisions = "warning",
+    visibility = ["//visibility:public"],
+    deps = [":kind_cluster_lib"],
+)
+
+o_py_test(
+    name = "kind_cluster_test",
+    srcs = ["kind_cluster_test.py"],
+    deps = [
+        ":kind_cluster_lib",
+        "@pip//pytest",
+    ],
+)
