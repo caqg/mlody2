@@ -272,9 +272,12 @@ def step6_limit_resources(
         if max_cpus:
             cmd += ["--cpus", max_cpus]
         if max_memory:
-            cmd += ["--memory", max_memory]
+            # --memory-swap -1 disables the swap cap; required because kind
+            # nodes have an existing memoryswap limit and Docker rejects a
+            # memory update unless memoryswap is updated at the same time.
+            cmd += ["--memory", max_memory, "--memory-swap", "-1"]
         cmd.append(node)
-        runner.run(cmd)
+        runner.run_output(cmd)
     return "applied"
 
 
