@@ -17,7 +17,7 @@ configuration.
 bazel run //mlody/infra/kind:o-mlody-cluster
 ```
 
-This runs five steps in order:
+This runs six steps in order:
 
 1. Start a local Docker registry container (`kind-registry` on port `5001`)
 2. Create a kind cluster named `mlody` configured to mirror `localhost:5001`
@@ -25,6 +25,8 @@ This runs five steps in order:
 4. Connect the registry container to the `kind` Docker network
 5. Apply a `local-registry-hosting` ConfigMap so tooling can discover the
    registry automatically
+6. Apply CPU/memory limits to each node (skipped unless `--max-cpus` or
+   `--max-memory` is set)
 
 The command is **idempotent** — running it again skips steps that are already
 complete.
@@ -42,6 +44,8 @@ complete.
 | `--dry-run`       | `false`                | Print commands without executing them           |
 | `--verbose`       | `false`                | Print each command before running it            |
 | `--quiet`         | `false`                | Suppress non-essential output                   |
+| `--max-cpus`      | _(no limit)_           | CPU limit per node, e.g. `2` or `0.5`           |
+| `--max-memory`    | _(no limit)_           | Memory limit per node, e.g. `4g` or `512m`      |
 
 Pass flags after a `--` separator:
 

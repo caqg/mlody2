@@ -28,6 +28,7 @@ from mlody.infra.kind.kind_cluster import (
     step3_configure_containerd,
     step4_connect_registry,
     step5_apply_configmap,
+    step6_limit_resources,
 )
 from mlody.infra.kind.runner import DryRunRunner
 
@@ -297,6 +298,43 @@ def test_step5_includes_kubeconfig_when_provided() -> None:
     runner = MockRunner()
     step5_apply_configmap(runner, 5001, kubeconfig="/home/user/.kube/config")
     assert runner.has_call("kubectl", "--kubeconfig")
+
+
+# ─── step6_limit_resources ────────────────────────────────────────────────────
+
+
+def test_step6_skips_when_no_limits() -> None:
+    """Neither limit set → docker update not called, returns skipped."""
+    runner = MockRunner()
+    result = step6_limit_resources(runner, "mlody", max_cpus=None, max_memory=None)
+    assert result == "skipped"
+    assert not runner.has_call("docker", "update")
+
+
+def test_step6_applies_cpus_and_memory() -> None:
+    """Both limits set → docker update called with --cpus and --memory for each node."""
+    runner = MockRunner()
+    runner.set_run_output("kind get nodes", "mlody-control-plane\n")
+    result = step6_limit_resources(runner, "mlody", max_cpus="2", max_memory="4g")
+    assert result == "applied"
+    assert runner.has_call("docker", "update", "--cpus", "2")
+    assert runner.has_call("docker", "update", "--memory", "4g")
+
+
+def test_step6_applies_cpus_only() -> None:
+    runner = MockRunner()
+    runner.set_run_output("kind get nodes", "mlody-control-plane\n")
+    step6_limit_resources(runner, "mlody", max_cpus="1", max_memory=None)
+    assert runner.has_call("docker", "update", "--cpus")
+    assert not runner.has_call("--memory")
+
+
+def test_step6_applies_memory_only() -> None:
+    runner = MockRunner()
+    runner.set_run_output("kind get nodes", "mlody-control-plane\n")
+    step6_limit_resources(runner, "mlody", max_cpus=None, max_memory="2g")
+    assert runner.has_call("docker", "update", "--memory")
+    assert not runner.has_call("--cpus")
 
 
 # ─── provision() integration ──────────────────────────────────────────────────

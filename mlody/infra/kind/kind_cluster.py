@@ -249,6 +249,34 @@ data:
 """
 
 
+def step6_limit_resources(
+    runner: RunnerProtocol,
+    cluster_name: str,
+    max_cpus: str | None,
+    max_memory: str | None,
+) -> str:
+    """Apply CPU and/or memory limits to every kind node via docker update.
+
+    Returns "skipped" when neither limit is specified.
+    Note: limits are per-node (equivalent to a total cap on single-node clusters).
+    """
+    if not max_cpus and not max_memory:
+        return "skipped"
+
+    nodes_output = runner.run_output(["kind", "get", "nodes", "--name", cluster_name])
+    nodes = [n for n in nodes_output.strip().splitlines() if n]
+
+    for node in nodes:
+        cmd = ["docker", "update"]
+        if max_cpus:
+            cmd += ["--cpus", max_cpus]
+        if max_memory:
+            cmd += ["--memory", max_memory]
+        cmd.append(node)
+        runner.run(cmd)
+    return "applied"
+
+
 def step5_apply_configmap(
     runner: RunnerProtocol,
     registry_port: int,
@@ -278,8 +306,10 @@ def provision(
     kubeconfig: str | None,
     save_config: str | None,
     force: bool,
+    max_cpus: str | None = None,
+    max_memory: str | None = None,
 ) -> None:
-    """Run all five provisioning steps in order.
+    """Run all provisioning steps in order.
 
     Wraps each step in a Rich spinner. Catches errors and exits with code 1
     with step identification so the user knows which step failed.
@@ -308,6 +338,10 @@ def provision(
         (
             "Step 5: Apply ConfigMap",
             lambda: step5_apply_configmap(runner, registry_port, kubeconfig),
+        ),
+        (
+            "Step 6: Limit resources",
+            lambda: step6_limit_resources(runner, cluster_name, max_cpus, max_memory),
         ),
     ]
 
@@ -375,6 +409,16 @@ def _print_step_result(step_name: str, result: object) -> None:
     default=False,
     help="Delete and recreate the kind cluster and registry.",
 )
+@click.option(
+    "--max-cpus",
+    default=None,
+    help="CPU limit per node, e.g. 2 or 0.5 (single-node: equivalent to total cap).",
+)
+@click.option(
+    "--max-memory",
+    default=None,
+    help="Memory limit per node, e.g. 4g or 512m (single-node: equivalent to total cap).",
+)
 def main(
     cluster_name: str,
     registry_name: str,
@@ -385,6 +429,8 @@ def main(
     verbose: bool,
     quiet: bool,
     force: bool,
+    max_cpus: str | None,
+    max_memory: str | None,
 ) -> None:
     """Provision a local kind cluster with a connected Docker registry."""
     global console  # noqa: PLW0603 — replaced at startup based on --quiet flag
@@ -403,6 +449,8 @@ def main(
         kubeconfig=kubeconfig,
         save_config=save_config,
         force=force,
+        max_cpus=max_cpus,
+        max_memory=max_memory,
     )
 
 
