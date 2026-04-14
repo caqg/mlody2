@@ -103,23 +103,50 @@ def step1_create_registry(
 # ─── Step 2: Create kind cluster ──────────────────────────────────────────────
 
 
-def _build_kind_config(registry_name: str, registry_port: int) -> dict[object, object]:  # noqa: ARG001
-    """Return the kind cluster config dict with the containerd mirror patch.
+def _build_kind_config(
+    registry_name: str,  # noqa: ARG001
+    registry_port: int,  # noqa: ARG001
+    max_cpus: str | None = None,
+    max_memory: str | None = None,
+) -> dict[object, object]:
+    """Return the kind cluster config dict.
 
-    Uses the containerd >=1.7 hosts.toml approach: set config_path so that
-    containerd reads per-registry hosts.toml files from certs.d/.  The actual
-    mirror mapping is written in step 3 (step3_configure_containerd).
+    containerdConfigPatches: uses the containerd >=1.7 hosts.toml approach
+    (config_path) so step 3 can write per-registry hosts.toml files.
 
-    The old registry.mirrors TOML syntax used by earlier kind examples is
-    ignored by containerd >=1.7 and must not be used here.
+    kubeadmConfigPatches / KubeletConfiguration: when resource limits are
+    given, sets systemReserved = (total − max) so the scheduler sees the
+    correct allocatable capacity.  Without this the kubelet reports the
+    host's full RAM/CPU regardless of any docker update limits.
     """
-    return {
+    config: dict[object, object] = {
         "kind": "Cluster",
         "apiVersion": "kind.x-k8s.io/v1alpha4",
         "containerdConfigPatches": [
             '[plugins."io.containerd.grpc.v1.cri".registry]\n  config_path = "/etc/containerd/certs.d"'
         ],
     }
+
+    system_reserved: dict[str, str] = {}
+    if max_cpus is not None:
+        total_cpus = os.cpu_count() or 1
+        reserved_m = max(0, int((total_cpus - float(max_cpus)) * 1000))
+        if reserved_m > 0:
+            system_reserved["cpu"] = f"{reserved_m}m"
+    if max_memory is not None:
+        reserved_bytes = max(0, _total_memory_bytes() - _parse_docker_mem(max_memory))
+        if reserved_bytes > 0:
+            system_reserved["memory"] = _bytes_to_k8s_mem(reserved_bytes)
+
+    if system_reserved:
+        kubelet_patch = yaml.dump({
+            "apiVersion": "kubelet.config.k8s.io/v1beta1",
+            "kind": "KubeletConfiguration",
+            "systemReserved": system_reserved,
+        })
+        config["nodes"] = [{"role": "control-plane", "kubeadmConfigPatches": [kubelet_patch]}]
+
+    return config
 
 
 def step2_create_cluster(
@@ -130,6 +157,8 @@ def step2_create_cluster(
     kubeconfig: str | None,
     save_config: str | None,
     force: bool,
+    max_cpus: str | None = None,
+    max_memory: str | None = None,
 ) -> None:
     """Create the kind cluster, skipping if it already exists (unless --force)."""
     existing_clusters = runner.run_output(["kind", "get", "clusters"]).strip()
@@ -141,7 +170,7 @@ def step2_create_cluster(
     if cluster_exists and force:
         runner.run(["kind", "delete", "cluster", "--name", cluster_name])
 
-    config = _build_kind_config(registry_name, registry_port)
+    config = _build_kind_config(registry_name, registry_port, max_cpus, max_memory)
 
     if save_config:
         config_path = save_config
@@ -328,7 +357,8 @@ def provision(
         (
             "Step 2: Create cluster",
             lambda: step2_create_cluster(
-                runner, cluster_name, registry_name, registry_port, kubeconfig, save_config, force
+                runner, cluster_name, registry_name, registry_port, kubeconfig, save_config, force,
+                max_cpus, max_memory,
             ),
         ),
         (
@@ -376,6 +406,49 @@ def _print_step_result(step_name: str, result: object) -> None:
         console.print(f"[green]✓[/green] {step_name}")
 
 
+# ─── Resource helpers ─────────────────────────────────────────────────────────
+
+
+def _total_memory_bytes() -> int:
+    """Return total physical RAM in bytes."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) * 1024  # kB → bytes
+    except OSError:
+        pass
+    try:
+        return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+    except (ValueError, OSError):
+        return 4 * (1024**3)  # 4 GiB fallback
+
+
+def _bytes_to_docker_mem(n: int) -> str:
+    """Format bytes as a Docker memory string ('4g', '512m')."""
+    gib = n // (1024**3)
+    if gib >= 1:
+        return f"{gib}g"
+    return f"{n // (1024**2)}m"
+
+
+def _bytes_to_k8s_mem(n: int) -> str:
+    """Format bytes as a Kubernetes memory quantity ('4Gi', '512Mi')."""
+    gib = n // (1024**3)
+    if gib >= 1:
+        return f"{gib}Gi"
+    return f"{n // (1024**2)}Mi"
+
+
+def _parse_docker_mem(s: str) -> int:
+    """Parse a Docker memory string ('4g', '512m') to bytes."""
+    s = s.lower().strip()
+    for suffix, mult in (("g", 1024**3), ("m", 1024**2), ("k", 1024)):
+        if s.endswith(suffix):
+            return int(s[:-1]) * mult
+    return int(s)
+
+
 # ─── Resource defaults ────────────────────────────────────────────────────────
 
 
@@ -386,29 +459,8 @@ def _half_cpus() -> str:
 
 
 def _half_memory() -> str:
-    """Return half of physical RAM in Docker memory format (e.g. '4g', '512m').
-
-    Reads /proc/meminfo on Linux; falls back to os.sysconf for macOS.
-    """
-    total_bytes: int | None = None
-    try:
-        with open("/proc/meminfo") as f:
-            for line in f:
-                if line.startswith("MemTotal:"):
-                    total_bytes = int(line.split()[1]) * 1024  # kB → bytes
-                    break
-    except OSError:
-        pass
-    if total_bytes is None:
-        try:
-            total_bytes = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
-        except (ValueError, OSError):
-            return "2g"
-    half = total_bytes // 2
-    gib = half // (1024**3)
-    if gib >= 1:
-        return f"{gib}g"
-    return f"{half // (1024 ** 2)}m"
+    """Return half of physical RAM in Docker memory format (e.g. '4g', '512m')."""
+    return _bytes_to_docker_mem(_total_memory_bytes() // 2)
 
 
 # ─── CLI entry point ──────────────────────────────────────────────────────────

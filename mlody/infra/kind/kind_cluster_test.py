@@ -21,8 +21,13 @@ from collections.abc import Mapping
 import pytest
 
 from mlody.infra.kind.kind_cluster import (
+    _build_kind_config,
+    _bytes_to_docker_mem,
+    _bytes_to_k8s_mem,
     _half_cpus,
     _half_memory,
+    _parse_docker_mem,
+    _total_memory_bytes,
     check_prerequisites,
     provision,
     step1_create_registry,
