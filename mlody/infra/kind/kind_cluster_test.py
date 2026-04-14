@@ -21,6 +21,8 @@ from collections.abc import Mapping
 import pytest
 
 from mlody.infra.kind.kind_cluster import (
+    _half_cpus,
+    _half_memory,
     check_prerequisites,
     provision,
     step1_create_registry,
@@ -100,6 +102,35 @@ class MockRunner:
         return any(
             all(f in " ".join(c) for f in fragments) for c in self.calls
         )
+
+
+# ─── resource defaults ────────────────────────────────────────────────────────
+
+
+def test_half_cpus_returns_positive_integer_string(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("os.cpu_count", lambda: 8)
+    assert _half_cpus() == "4"
+
+
+def test_half_cpus_minimum_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("os.cpu_count", lambda: 1)
+    assert _half_cpus() == "1"
+
+
+def test_half_memory_gigabytes() -> None:
+    from unittest.mock import mock_open, patch
+
+    with patch("builtins.open", mock_open(read_data="MemTotal:       16384000 kB\n")):
+        result = _half_memory()
+    assert result.endswith("g")
+    assert int(result[:-1]) >= 1
+
+
+def test_half_memory_fallback_returns_valid_format() -> None:
+    from unittest.mock import patch
+
+    with patch("builtins.open", side_effect=OSError()), patch("os.sysconf", side_effect=OSError()):
+        assert _half_memory() == "2g"
 
 
 # ─── check_prerequisites ──────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ inject a mock without touching subprocess.
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 import tempfile
@@ -372,6 +373,41 @@ def _print_step_result(step_name: str, result: object) -> None:
         console.print(f"[green]✓[/green] {step_name}")
 
 
+# ─── Resource defaults ────────────────────────────────────────────────────────
+
+
+def _half_cpus() -> str:
+    """Return half the logical CPU count as a string, minimum 1."""
+    count = os.cpu_count() or 2
+    return str(max(1, count // 2))
+
+
+def _half_memory() -> str:
+    """Return half of physical RAM in Docker memory format (e.g. '4g', '512m').
+
+    Reads /proc/meminfo on Linux; falls back to os.sysconf for macOS.
+    """
+    total_bytes: int | None = None
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    total_bytes = int(line.split()[1]) * 1024  # kB → bytes
+                    break
+    except OSError:
+        pass
+    if total_bytes is None:
+        try:
+            total_bytes = os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+        except (ValueError, OSError):
+            return "2g"
+    half = total_bytes // 2
+    gib = half // (1024**3)
+    if gib >= 1:
+        return f"{gib}g"
+    return f"{half // (1024 ** 2)}m"
+
+
 # ─── CLI entry point ──────────────────────────────────────────────────────────
 
 
@@ -412,12 +448,12 @@ def _print_step_result(step_name: str, result: object) -> None:
 @click.option(
     "--max-cpus",
     default=None,
-    help="CPU limit per node, e.g. 2 or 0.5 (single-node: equivalent to total cap).",
+    help="CPU limit per node, e.g. 2 or 0.5. Default: half of available cores.",
 )
 @click.option(
     "--max-memory",
     default=None,
-    help="Memory limit per node, e.g. 4g or 512m (single-node: equivalent to total cap).",
+    help="Memory limit per node, e.g. 4g or 512m. Default: half of physical RAM.",
 )
 def main(
     cluster_name: str,
@@ -435,6 +471,11 @@ def main(
     """Provision a local kind cluster with a connected Docker registry."""
     global console  # noqa: PLW0603 — replaced at startup based on --quiet flag
     console = Console(quiet=quiet)
+
+    if max_cpus is None:
+        max_cpus = _half_cpus()
+    if max_memory is None:
+        max_memory = _half_memory()
 
     if dry_run:
         runner: RunnerProtocol = DryRunRunner()
