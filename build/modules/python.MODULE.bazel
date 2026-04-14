@@ -24,4 +24,9 @@ pip.parse(
     python_version = "3.13.2",
     requirements_lock = "//requirements:all.txt",
 )
+pip.parse(
+    hub_name = "pip",
+    python_version = "3.11.9",
+    requirements_lock = "//requirements:all.txt",
+)
 use_repo(pip, "pip")
