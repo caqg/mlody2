@@ -15,6 +15,8 @@ _ATTRS_MLODY = (_THIS_DIR / "attrs.mlody").read_text()
 _TYPES_MLODY = (_THIS_DIR / "types.mlody").read_text()
 _LOCATIONS_MLODY = (_THIS_DIR / "locations.mlody").read_text()
 _VALUES_MLODY = (_THIS_DIR / "values.mlody").read_text()
+_BUILD_REF_MLODY = (_THIS_DIR / "build_ref.mlody").read_text()
+_IMPLEMENTATION_MLODY = (_THIS_DIR / "implementation.mlody").read_text()
 _ACTION_MLODY = (_THIS_DIR / "action.mlody").read_text()
 
 _BASE_FILES: dict[str, str] = {
@@ -23,6 +25,8 @@ _BASE_FILES: dict[str, str] = {
     "mlody/common/types.mlody": _TYPES_MLODY,
     "mlody/common/locations.mlody": _LOCATIONS_MLODY,
     "mlody/common/values.mlody": _VALUES_MLODY,
+    "mlody/common/build_ref.mlody": _BUILD_REF_MLODY,
+    "mlody/common/implementation.mlody": _IMPLEMENTATION_MLODY,
     "mlody/common/action.mlody": _ACTION_MLODY,
 }
 
@@ -30,8 +34,12 @@ _PREAMBLE = (
     'load("//mlody/common/types.mlody")\n'
     'load("//mlody/common/locations.mlody")\n'
     'load("//mlody/common/values.mlody")\n'
+    'load("//mlody/common/implementation.mlody")\n'
     'load("//mlody/common/action.mlody")\n'
 )
+
+# A container implementation used as the standard implementation for action tests.
+_CONTAINER_IMPL = 'container(build=bazel(target="//mlody/common:action_lib"))'
 
 
 def _eval(extra_mlody: str) -> Evaluator:
@@ -54,7 +62,7 @@ def test_action_registers_with_kind_action() -> None:
     ev = _eval(
         'value(name="inp", type=integer(), location=s3())\n'
         'value(name="out", type=integer(), location=s3())\n'
-        'action(name="my_action", inputs=["inp"], outputs=["out"], implementation=["//mlody/common:action_lib"])\n'
+        'action(name="my_action", inputs=["inp"], outputs=["out"], implementation=container(build=bazel(target="//mlody/common:action_lib")))\n'
     )
     assert "my_action" in ev._actions_by_name
     a = ev._actions_by_name["my_action"]
@@ -71,7 +79,7 @@ def test_action_stores_inputs_and_outputs() -> None:
     ev = _eval(
         'value(name="inp", type=integer(), location=s3())\n'
         'value(name="out", type=string(), location=s3())\n'
-        'action(name="a", inputs=["inp"], outputs=["out"], implementation=["//mlody/common:action_lib"])\n'
+        'action(name="a", inputs=["inp"], outputs=["out"], implementation=container(build=bazel(target="//mlody/common:action_lib")))\n'
     )
     a = ev._actions_by_name["a"]
     assert a.inputs[0].name == "inp"
@@ -86,7 +94,7 @@ def test_action_stores_inputs_and_outputs() -> None:
 def test_action_string_value_label_resolves() -> None:
     ev = _eval(
         'value(name="my_val", type=integer(), location=s3())\n'
-        'action(name="a", inputs=["my_val"], outputs=[], implementation=["//mlody/common:action_lib"])\n'
+        'action(name="a", inputs=["my_val"], outputs=[], implementation=container(build=bazel(target="//mlody/common:action_lib")))\n'
     )
     a = ev._actions_by_name["a"]
     assert a.inputs[0].name == "my_val"
@@ -99,7 +107,7 @@ def test_action_string_value_label_resolves() -> None:
 
 
 def test_action_empty_inputs_and_outputs_allowed() -> None:
-    ev = _eval('action(name="empty", inputs=[], outputs=[], implementation=["//mlody/common:action_lib"])\n')
+    ev = _eval('action(name="empty", inputs=[], outputs=[], implementation=container(build=bazel(target="//mlody/common:action_lib")))\n')
     a = ev._actions_by_name["empty"]
     assert a.inputs == []
     assert a.outputs == []
@@ -123,7 +131,7 @@ def test_action_implementation_is_mandatory() -> None:
 def test_action_config_value_refs_stored() -> None:
     ev = _eval(
         'value(name="cfg", type=integer(), location=s3())\n'
-        'action(name="a", inputs=[], outputs=[], config=["cfg"], implementation=["//mlody/common:action_lib"])\n'
+        'action(name="a", inputs=[], outputs=[], config=["cfg"], implementation=container(build=bazel(target="//mlody/common:action_lib")))\n'
     )
     a = ev._actions_by_name["a"]
     assert len(a.config) == 1
@@ -137,7 +145,7 @@ def test_action_config_value_refs_stored() -> None:
 
 def test_action_unknown_value_label_raises_name_error() -> None:
     with pytest.raises(NameError):
-        _eval('action(name="a", inputs=["nonexistent"], outputs=[], implementation=["//mlody/common:action_lib"])\n')
+        _eval('action(name="a", inputs=["nonexistent"], outputs=[], implementation=container(build=bazel(target="//mlody/common:action_lib")))\n')
 
 
 # ---------------------------------------------------------------------------
@@ -147,46 +155,46 @@ def test_action_unknown_value_label_raises_name_error() -> None:
 
 def test_action_wrong_type_in_inputs_raises_type_error() -> None:
     with pytest.raises(TypeError):
-        _eval('action(name="a", inputs=[integer()], outputs=[], implementation=["//mlody/common:action_lib"])\n')
+        _eval('action(name="a", inputs=[integer()], outputs=[], implementation=container(build=bazel(target="//mlody/common:action_lib")))\n')
 
 
 # ---------------------------------------------------------------------------
-# TC-009: implementation rejects empty target list
+# TC-009: implementation rejects a list (now requires implementation_ref)
 # ---------------------------------------------------------------------------
 
 
-def test_action_implementation_rejects_empty_list() -> None:
-    with pytest.raises(ValueError, match="at least one target"):
+def test_action_implementation_rejects_list() -> None:
+    # The old string_list format is no longer accepted — a TypeError is raised.
+    with pytest.raises(TypeError):
         _eval('action(name="a", inputs=[], outputs=[], implementation=[])\n')
 
 
 # ---------------------------------------------------------------------------
-# TC-010: implementation stores bazel target strings
+# TC-010: implementation stores a container struct
 # ---------------------------------------------------------------------------
 
 
-def test_action_implementation_stores_bazel_targets() -> None:
+def test_action_implementation_stores_container_struct() -> None:
     ev = _eval(
         'action(\n'
         '  name="a",\n'
         '  inputs=[],\n'
         '  outputs=[],\n'
-        '  implementation=["//mlody/common/huggingface:model-download", "//mlody/cli:main"]\n'
+        '  implementation=container(build=bazel(target="//mlody/common:action_lib"))\n'
         ')\n'
     )
     a = ev._actions_by_name["a"]
-    assert a.implementation == [
-        "//mlody/common/huggingface:model-download",
-        "//mlody/cli:main",
-    ]
+    assert a.implementation.kind == "implementation"
+    assert a.implementation.type == "container"
 
 
 # ---------------------------------------------------------------------------
-# TC-011: implementation rejects non-string entries
+# TC-011: implementation rejects a list with non-string entries
 # ---------------------------------------------------------------------------
 
 
-def test_action_implementation_non_string_raises_type_error() -> None:
+def test_action_implementation_non_string_list_raises_type_error() -> None:
+    # Any list is now rejected — only implementation structs are accepted.
     with pytest.raises(TypeError):
         _eval('action(name="a", inputs=[], outputs=[], implementation=[1])\n')
 
@@ -198,7 +206,7 @@ def test_action_implementation_non_string_raises_type_error() -> None:
 
 def test_action_requirements_default_to_empty_list() -> None:
     ev = _eval(
-        'action(name="a", inputs=[], outputs=[], implementation=["//mlody/common:action_lib"])\n'
+        'action(name="a", inputs=[], outputs=[], implementation=container(build=bazel(target="//mlody/common:action_lib")))\n'
     )
     a = ev._actions_by_name["a"]
     assert a.requirements == []
@@ -222,7 +230,7 @@ def test_action_requirements_stored_for_supported_kinds() -> None:
         '    cpu_requirement(count=4, type="x86_64"),\n'
         '    gpu_requirement(count=1, type="nvidia-l4"),\n'
         '  ],\n'
-        '  implementation=["//mlody/common:action_lib"]\n'
+        '  implementation=container(build=bazel(target="//mlody/common:action_lib"))\n'
         ')\n'
     )
     a = ev._actions_by_name["a"]
@@ -247,7 +255,7 @@ def test_action_requirements_rejects_non_requirement_structs() -> None:
             '  inputs=[],\n'
             '  outputs=[],\n'
             '  requirements=[integer()],\n'
-            '  implementation=["//mlody/common:action_lib"]\n'
+            '  implementation=container(build=bazel(target="//mlody/common:action_lib"))\n'
             ')\n'
         )
 
@@ -264,7 +272,7 @@ def test_action_cpu_requirement_defaults_type_to_star() -> None:
         '  inputs=[],\n'
         '  outputs=[],\n'
         '  requirements=[cpu_requirement(count=2)],\n'
-        '  implementation=["//mlody/common:action_lib"]\n'
+        '  implementation=container(build=bazel(target="//mlody/common:action_lib"))\n'
         ')\n'
     )
     a = ev._actions_by_name["a"]
@@ -280,7 +288,7 @@ def test_action_gpu_requirement_defaults_type_to_star() -> None:
         '  inputs=[],\n'
         '  outputs=[],\n'
         '  requirements=[gpu_requirement(count=1)],\n'
-        '  implementation=["//mlody/common:action_lib"]\n'
+        '  implementation=container(build=bazel(target="//mlody/common:action_lib"))\n'
         ')\n'
     )
     a = ev._actions_by_name["a"]

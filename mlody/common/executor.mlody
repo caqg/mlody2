@@ -1,0 +1,136 @@
+load("//mlody/core/rule.mlody", "rule")
+load("//mlody/common/attrs.mlody", "attr", "validate_attr_value")
+
+
+def _make_executor_factory(exec_struct):
+    # python.getattr is an audited python.* escape — Struct fields are not
+    # directly iterable in Starlark.
+    allowed = python.getattr(exec_struct, "_allowed_attrs", {})
+
+    def factory(**kwargs):
+        for k in kwargs:
+            if k not in allowed:
+                raise TypeError(
+                    exec_struct.name + "() got unexpected attribute " + repr(k)
+                    + ". Allowed: " + repr(set(allowed))
+                )
+        # Validate each kwarg against its declared type (skip if type is None).
+        for k, v in kwargs.items():
+            attr_def = allowed[k]
+            type_ref = python.getattr(attr_def, "type", None)
+            if type_ref != None:
+                validate_attr_value(k, v, type_ref)
+
+        # Check mandatory attrs.
+        for k, attr_def in allowed.items():
+            metadata = python.getattr(attr_def, "metadata", None)
+            is_mandatory = python.getattr(metadata, "mandatory", True) if metadata != None else True
+            if is_mandatory and k not in kwargs:
+                raise TypeError(
+                    exec_struct.name + "() missing mandatory attribute " + repr(k)
+                )
+
+        # Run the struct-level predicate if present.
+        predicate = python.getattr(exec_struct, "_predicate", None)
+        if predicate != None:
+            predicate(kwargs)
+
+        # Build result struct: discriminator fields + caller kwargs + defaults.
+        fields = {
+            "kind": exec_struct.kind,
+            "type": exec_struct.type,
+            "name": exec_struct.name,
+        }
+        for k, v in kwargs.items():
+            fields[k] = v
+        for k, attr_def in allowed.items():
+            if k not in fields:
+                metadata = python.getattr(attr_def, "metadata", None)
+                default = python.getattr(metadata, "default", None) if metadata != None else None
+                fields[k] = default
+        return Struct(**fields)
+
+    return factory
+
+
+def _executor_impl(ctx):
+    # Bootstrap directly as a Struct literal — extend_attrs rejects
+    # kind="executor".
+    allowed = {}
+    attrs_arg = python.getattr(ctx.attr, "attrs", None)
+    if attrs_arg != None:
+        for attr_name, attr_def in attrs_arg.as_mapping().items():
+            allowed[attr_name] = attr_def
+
+    predicate = python.getattr(ctx.attr, "predicate", None)
+
+    exec_struct = Struct(
+        kind="executor",
+        type=ctx.attr.name,
+        name=ctx.attr.name,
+        _allowed_attrs=allowed,
+        _predicate=predicate,
+    )
+
+    builtins.register(ctx.kind, exec_struct)
+    builtins.inject(ctx.attr.name, _make_executor_factory(exec_struct))
+    return {}
+
+
+executor = rule(
+    implementation=_executor_impl,
+    kind="executor",
+    attrs={
+        "attrs":     attr(type="dict",     mandatory=False, default=None),
+        "predicate": attr(type="callable", mandatory=False, default=None),
+    },
+)
+
+
+# ---------------------------------------------------------------------------
+# host: runs directly on the execution host with no container or scheduler
+# ---------------------------------------------------------------------------
+
+executor(
+    name="host",
+    attrs={},
+)
+
+
+# ---------------------------------------------------------------------------
+# kubernetes: runs as a Kubernetes pod/job
+# ---------------------------------------------------------------------------
+
+executor(
+    name="kubernetes",
+    attrs={
+        "namespace":       attr(type="string", mandatory=False, default=None),
+        "service_account": attr(type="string", mandatory=False, default=None),
+    },
+)
+
+
+# ---------------------------------------------------------------------------
+# kubeflow: runs as a Kubeflow Pipelines component
+# ---------------------------------------------------------------------------
+
+executor(
+    name="kubeflow",
+    attrs={
+        "pipeline_name": attr(type="string", mandatory=False, default=None),
+        "experiment":    attr(type="string", mandatory=False, default=None),
+    },
+)
+
+
+# ---------------------------------------------------------------------------
+# argo_workflow: runs as an Argo Workflows step
+# ---------------------------------------------------------------------------
+
+executor(
+    name="argo_workflow",
+    attrs={
+        "namespace":         attr(type="string", mandatory=False, default=None),
+        "workflow_template": attr(type="string", mandatory=False, default=None),
+    },
+)

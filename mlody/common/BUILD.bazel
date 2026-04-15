@@ -4,6 +4,9 @@ load("//build/bzl:python.bzl", "o_py_library", "o_py_test")
 exports_files([
     "action.mlody",
     "attrs.mlody",
+    "build_ref.mlody",
+    "executor.mlody",
+    "implementation.mlody",
     "locations.mlody",
     "representation.mlody",
     "task.mlody",
@@ -96,7 +99,54 @@ o_py_test(
     data = [
         "action.mlody",
         "attrs.mlody",
+        "build_ref.mlody",
+        "implementation.mlody",
         "locations.mlody",
+        "types.mlody",
+        "values.mlody",
+        "//mlody/core:rule.mlody",
+    ],
+    deps = [
+        "//common/python/starlarkish",
+        "//common/python/starlarkish/core:core_lib",
+        "//common/python/starlarkish/evaluator:evaluator_lib",
+        "@pip//pytest",
+    ],
+)
+
+o_py_test(
+    name = "implementation_test",
+    srcs = ["implementation_test.py"],
+    data = [
+        "action.mlody",
+        "attrs.mlody",
+        "build_ref.mlody",
+        "implementation.mlody",
+        "locations.mlody",
+        "types.mlody",
+        "values.mlody",
+        "//mlody/core:rule.mlody",
+    ],
+    deps = [
+        "//common/python/starlarkish",
+        "//common/python/starlarkish/core:core_lib",
+        "//common/python/starlarkish/evaluator:evaluator_lib",
+        "@pip//pytest",
+    ],
+)
+
+o_py_test(
+    name = "executor_test",
+    srcs = ["executor_test.py"],
+    data = [
+        "action.mlody",
+        "attrs.mlody",
+        "build_ref.mlody",
+        "executor.mlody",
+        "implementation.mlody",
+        "locations.mlody",
+        "representation.mlody",
+        "task.mlody",
         "types.mlody",
         "values.mlody",
         "//mlody/core:rule.mlody",
@@ -115,6 +165,9 @@ o_py_test(
     data = [
         "action.mlody",
         "attrs.mlody",
+        "build_ref.mlody",
+        "executor.mlody",
+        "implementation.mlody",
         "locations.mlody",
         "representation.mlody",
         "task.mlody",

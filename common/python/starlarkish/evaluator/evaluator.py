@@ -218,6 +218,12 @@ class Evaluator:
         self._actions_by_name: dict[str, Named] = {}
         self.tasks: dict[str, Named] = {}
         self._tasks_by_name: dict[str, Named] = {}
+        self.implementations: dict[str, Named] = {}
+        self._implementations_by_name: dict[str, Named] = {}
+        self.build_refs: dict[str, Named] = {}
+        self._build_refs_by_name: dict[str, Named] = {}
+        self.executors: dict[str, Named] = {}
+        self._executors_by_name: dict[str, Named] = {}
         self.all: dict[str, Named] = {}
         for _pname in ["integer", "string", "bool", "float"]:
             _sentinel: Named = Struct(  # type: ignore[assignment]
@@ -282,9 +288,18 @@ class Evaluator:
         elif kind == "task":
             self.tasks[key] = thing
             self._tasks_by_name[thing.name] = thing
+        elif kind == "implementation":
+            self.implementations[key] = thing
+            self._implementations_by_name[thing.name] = thing
+        elif kind == "build_ref":
+            self.build_refs[key] = thing
+            self._build_refs_by_name[thing.name] = thing
+        elif kind == "executor":
+            self.executors[key] = thing
+            self._executors_by_name[thing.name] = thing
         else:
             raise ValueError(
-                f"Unknown registration kind {kind!r}. Supported kinds: 'root', 'type', 'location', 'representation', 'value', 'action', 'task'."
+                f"Unknown registration kind {kind!r}. Supported kinds: 'root', 'type', 'location', 'representation', 'value', 'action', 'task', 'implementation', 'build_ref', 'executor'."
             )
         self.all[(kind, _stem, thing.name)] = thing
         _log.debug("Registered %r as %s", key, kind)
@@ -335,9 +350,27 @@ class Evaluator:
                     f"No task {name!r}. Available: {sorted(self._tasks_by_name)}"
                 )
             return self._tasks_by_name[name]
+        elif kind == "implementation":
+            if name not in self._implementations_by_name:
+                raise NameError(
+                    f"No implementation {name!r}. Available: {sorted(self._implementations_by_name)}"
+                )
+            return self._implementations_by_name[name]
+        elif kind == "build_ref":
+            if name not in self._build_refs_by_name:
+                raise NameError(
+                    f"No build_ref {name!r}. Available: {sorted(self._build_refs_by_name)}"
+                )
+            return self._build_refs_by_name[name]
+        elif kind == "executor":
+            if name not in self._executors_by_name:
+                raise NameError(
+                    f"No executor {name!r}. Available: {sorted(self._executors_by_name)}"
+                )
+            return self._executors_by_name[name]
         else:
             raise ValueError(
-                f"Unknown lookup kind {kind!r}. Supported: 'root', 'type', 'location', 'representation', 'value', 'action', 'task'."
+                f"Unknown lookup kind {kind!r}. Supported: 'root', 'type', 'location', 'representation', 'value', 'action', 'task', 'implementation', 'build_ref', 'executor'."
             )
 
     def _load(

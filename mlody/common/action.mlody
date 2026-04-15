@@ -208,7 +208,15 @@ def _action_impl(ctx):
     if requirements_raw == None:
         requirements_raw = []
     requirements = _validate_requirements("requirements", requirements_raw)
-    implementation = _validate_string_list("implementation", ctx.attr.implementation)
+    # Validate implementation: must be an implementation struct or a string (lazy ref).
+    implementation_raw = ctx.attr.implementation
+    if not isinstance(implementation_raw, str):
+        if type(implementation_raw) != "struct" or python.getattr(implementation_raw, "kind", None) != "implementation":
+            raise TypeError(
+                "implementation: expected an implementation struct or string name, got "
+                + repr(type(implementation_raw))
+            )
+    implementation = implementation_raw
 
     action_struct = Struct(
         kind    = "action",
@@ -231,7 +239,7 @@ action = rule(
         "outputs": attr(type="value_ref_list"),
         "config":  attr(type="value_ref_list", mandatory=False),
         "requirements": attr(mandatory=False),
-        "implementation": attr(type="string_list"),
+        "implementation": attr(type="implementation_ref"),
     },
 )
 

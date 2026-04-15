@@ -111,6 +111,28 @@ def validate_attr_value(attr_name: str, value: python.Any, type_ref: python.Any)
                 )
             return
 
+        if type_ref == "implementation_ref":
+            # Accepts an implementation struct OR a string name (lazy ref)
+            if isinstance(value, str):
+                return
+            if type(value) != "struct" or python.getattr(value, "kind", None) != "implementation":
+                raise TypeError(
+                    f"Attribute {attr_name!r} expects an implementation struct or string name, "
+                    f"got {type(value)!r}"
+                )
+            return
+
+        if type_ref == "executor_ref":
+            # Accepts an executor struct OR a string name (lazy ref)
+            if isinstance(value, str):
+                return
+            if type(value) != "struct" or python.getattr(value, "kind", None) != "executor":
+                raise TypeError(
+                    f"Attribute {attr_name!r} expects an executor struct or string name, "
+                    f"got {type(value)!r}"
+                )
+            return
+
         if type_ref == "field_list":
             if not isinstance(value, list):
                 raise TypeError(f"Attribute {attr_name!r} expects a list of field() or value() specs")

@@ -1,0 +1,185 @@
+load("//mlody/core/rule.mlody", "rule")
+load("//mlody/common/attrs.mlody", "attr", "validate_attr_value")
+load(":build_ref.mlody")  # sibling load — ensures build_ref and bazel are in scope
+
+
+def _make_implementation_factory(impl_struct):
+    # python.getattr is an audited python.* escape — Struct fields are not
+    # directly iterable in Starlark.
+    allowed = python.getattr(impl_struct, "_allowed_attrs", {})
+
+    def factory(**kwargs):
+        for k in kwargs:
+            if k not in allowed:
+                raise TypeError(
+                    impl_struct.name + "() got unexpected attribute " + repr(k)
+                    + ". Allowed: " + repr(set(allowed))
+                )
+        # Validate each kwarg against its declared type (skip if type is None).
+        # allowed[k] is a Struct (from struct() coercion in rule.mlody).
+        for k, v in kwargs.items():
+            attr_def = allowed[k]
+            type_ref = python.getattr(attr_def, "type", None)
+            if type_ref != None:
+                validate_attr_value(k, v, type_ref)
+
+        # Check mandatory attrs.
+        for k, attr_def in allowed.items():
+            metadata = python.getattr(attr_def, "metadata", None)
+            is_mandatory = python.getattr(metadata, "mandatory", True) if metadata != None else True
+            if is_mandatory and k not in kwargs:
+                raise TypeError(
+                    impl_struct.name + "() missing mandatory attribute " + repr(k)
+                )
+
+        # Run the struct-level predicate (e.g. mutual-exclusivity for shell_script).
+        predicate = python.getattr(impl_struct, "_predicate", None)
+        if predicate != None:
+            predicate(kwargs)
+
+        # Build result struct: discriminator fields + caller kwargs + defaults for
+        # optional attrs that were not supplied.
+        fields = {
+            "kind": impl_struct.kind,
+            "type": impl_struct.type,
+            "name": impl_struct.name,
+        }
+        for k, v in kwargs.items():
+            fields[k] = v
+        for k, attr_def in allowed.items():
+            if k not in fields:
+                metadata = python.getattr(attr_def, "metadata", None)
+                default = python.getattr(metadata, "default", None) if metadata != None else None
+                fields[k] = default
+        return Struct(**fields)
+
+    return factory
+
+
+def _implementation_impl(ctx):
+    # Bootstrap directly as a Struct literal — extend_attrs rejects
+    # kind="implementation".
+    allowed = {}
+    attrs_arg = python.getattr(ctx.attr, "attrs", None)
+    if attrs_arg != None:
+        for attr_name, attr_def in attrs_arg.as_mapping().items():
+            allowed[attr_name] = attr_def
+
+    predicate = python.getattr(ctx.attr, "predicate", None)
+
+    impl_struct = Struct(
+        kind="implementation",
+        type=ctx.attr.name,
+        name=ctx.attr.name,
+        _allowed_attrs=allowed,
+        _predicate=predicate,
+    )
+
+    builtins.register(ctx.kind, impl_struct)
+    builtins.inject(ctx.attr.name, _make_implementation_factory(impl_struct))
+    return {}
+
+
+implementation = rule(
+    implementation=_implementation_impl,
+    kind="implementation",
+    attrs={
+        "attrs":     attr(type="dict",     mandatory=False, default=None),
+        "predicate": attr(type="callable", mandatory=False, default=None),
+    },
+)
+
+
+# ---------------------------------------------------------------------------
+# container: runs inside a container image referenced by a build_ref struct
+# ---------------------------------------------------------------------------
+
+def _container_predicate(kwargs):
+    build = kwargs.get("build", None)
+    # python.getattr is an audited python.* escape for reading kind off a struct.
+    build_kind = python.getattr(build, "kind", None) if build != None else None
+    if build_kind != "build_ref":
+        raise TypeError(
+            "container() build must be a build_ref struct (e.g. bazel(...)), "
+            "got " + repr(build)
+        )
+
+
+implementation(
+    name="container",
+    attrs={
+        # type=None: build holds a build_ref Struct; validate_attr_value is skipped
+        # for None types and the predicate handles the kind check.
+        "build": attr(type=None, mandatory=True),
+    },
+    predicate=_container_predicate,
+)
+
+
+# ---------------------------------------------------------------------------
+# shell_script: runs a shell script — exactly one of content/file required
+# ---------------------------------------------------------------------------
+
+def _shell_script_predicate(kwargs):
+    content = kwargs.get("content", None)
+    file = kwargs.get("file", None)
+
+    if content != None and file != None:
+        raise ValueError(
+            "shell_script() requires exactly one of 'content' or 'file', "
+            "but both were provided"
+        )
+    if content == None and file == None:
+        raise ValueError(
+            "shell_script() requires exactly one of 'content' or 'file', "
+            "but neither was provided"
+        )
+    if file != None:
+        if file.startswith("/"):
+            raise ValueError(
+                "shell_script() file must be a repo-relative path, "
+                "got absolute path: " + repr(file)
+            )
+        # Reject any path component that is exactly ".." to prevent escaping.
+        for component in file.split("/"):
+            if component == "..":
+                raise ValueError(
+                    "shell_script() file must not contain '..', "
+                    "got: " + repr(file)
+                )
+
+
+implementation(
+    name="shell_script",
+    attrs={
+        "content":     attr(type="string", mandatory=False, default=None),
+        "file":        attr(type="string", mandatory=False, default=None),
+        "interpreter": attr(type="string", mandatory=False, default=None),
+    },
+    predicate=_shell_script_predicate,
+)
+
+
+# ---------------------------------------------------------------------------
+# system_binary: invokes a pre-installed binary by its absolute path
+# ---------------------------------------------------------------------------
+
+def _system_binary_predicate(kwargs):
+    path = kwargs.get("path", None)
+    if path == None:
+        return
+    # Must start with "/" but not "//" (Bazel labels like "//x:y" are not paths).
+    if not path.startswith("/") or path.startswith("//"):
+        raise ValueError(
+            "system_binary() path must be an absolute filesystem path starting "
+            "with '/' (not a Bazel label), got: " + repr(path)
+        )
+
+
+implementation(
+    name="system_binary",
+    attrs={
+        "path": attr(type="string", mandatory=True),
+    },
+    predicate=_system_binary_predicate,
+)

@@ -1,0 +1,105 @@
+load("//mlody/core/rule.mlody", "rule")
+load("//mlody/common/attrs.mlody", "attr", "validate_attr_value")
+
+
+def _make_build_ref_factory(br_struct):
+    # python.getattr is an audited python.* escape — Struct fields are not
+    # directly iterable in Starlark.
+    allowed = python.getattr(br_struct, "_allowed_attrs", {})
+
+    def factory(**kwargs):
+        for k in kwargs:
+            if k not in allowed:
+                raise TypeError(
+                    br_struct.name + "() got unexpected attribute " + repr(k)
+                    + ". Allowed: " + repr(set(allowed))
+                )
+        # Validate each kwarg against its declared type (skip if type is None).
+        # allowed[k] is a Struct (from struct() coercion in rule.mlody).
+        for k, v in kwargs.items():
+            attr_def = allowed[k]
+            type_ref = python.getattr(attr_def, "type", None)
+            if type_ref != None:
+                validate_attr_value(k, v, type_ref)
+
+        # Check mandatory attrs.
+        for k, attr_def in allowed.items():
+            metadata = python.getattr(attr_def, "metadata", None)
+            is_mandatory = python.getattr(metadata, "mandatory", True) if metadata != None else True
+            if is_mandatory and k not in kwargs:
+                raise TypeError(
+                    br_struct.name + "() missing mandatory attribute " + repr(k)
+                )
+
+        # Run the struct-level predicate (e.g. target prefix check for bazel).
+        predicate = python.getattr(br_struct, "_predicate", None)
+        if predicate != None:
+            predicate(kwargs)
+
+        # Merge discriminator fields + caller kwargs + defaults for optional attrs.
+        fields = {"kind": br_struct.kind, "type": br_struct.type, "name": br_struct.name}
+        for k, v in kwargs.items():
+            fields[k] = v
+        for k, attr_def in allowed.items():
+            if k not in fields:
+                metadata = python.getattr(attr_def, "metadata", None)
+                default = python.getattr(metadata, "default", None) if metadata != None else None
+                fields[k] = default
+        return Struct(**fields)
+
+    return factory
+
+
+def _build_ref_impl(ctx):
+    # Bootstrap directly as a Struct literal — extend_attrs rejects
+    # kind="build_ref".
+    allowed = {}
+    attrs_arg = python.getattr(ctx.attr, "attrs", None)
+    if attrs_arg != None:
+        # struct() coerces nested dicts: attrs_arg is a Struct, items() works
+        # via as_mapping().
+        for attr_name, attr_def in attrs_arg.as_mapping().items():
+            allowed[attr_name] = attr_def
+
+    predicate = python.getattr(ctx.attr, "predicate", None)
+
+    br_struct = Struct(
+        kind="build_ref",
+        type=ctx.attr.name,
+        name=ctx.attr.name,
+        _allowed_attrs=allowed,
+        _predicate=predicate,
+    )
+
+    builtins.register(ctx.kind, br_struct)
+    builtins.inject(ctx.attr.name, _make_build_ref_factory(br_struct))
+    return {}
+
+
+build_ref = rule(
+    implementation=_build_ref_impl,
+    kind="build_ref",
+    attrs={
+        "attrs":     attr(type="dict",     mandatory=False, default=None),
+        "predicate": attr(type="callable", mandatory=False, default=None),
+    },
+)
+
+
+def _bazel_predicate(kwargs):
+    target = kwargs.get("target", None)
+    if target == None:
+        return
+    if not (target.startswith("//") or target.startswith(":")):
+        raise ValueError(
+            "bazel() target must start with '//' or ':', got " + repr(target)
+        )
+
+
+build_ref(
+    name="bazel",
+    attrs={
+        "target": attr(type="string", mandatory=True),
+    },
+    predicate=_bazel_predicate,
+)

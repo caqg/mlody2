@@ -25,14 +25,22 @@ be marked explicitly.
 
 ### Sandbox (what is available inside `.mlody`)
 
-| Symbol            | Description                                                                                                                                                                 |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `struct(...)`     | Immutable dot-accessible data type                                                                                                                                          |
-| `Struct`          | The `Struct` class itself                                                                                                                                                   |
-| `load(path, ...)` | Import symbols from other `.mlody` files                                                                                                                                    |
-| `builtins`        | Host communication object (see below)                                                                                                                                       |
-| `python.*`        | Python-specific escapes (audit target, avoid)                                                                                                                               |
-| Standard builtins | `abs`, `all`, `any`, `bool`, `dict`, `enumerate`, `float`, `int`, `len`, `list`, `max`, `min`, `print`, `range`, `repr`, `reversed`, `set`, `sorted`, `str`, `tuple`, `zip` |
+| Symbol               | Description                                                                                                                                                                 |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `struct(...)`        | Immutable dot-accessible data type                                                                                                                                          |
+| `Struct`             | The `Struct` class itself                                                                                                                                                   |
+| `load(path, ...)`    | Import symbols from other `.mlody` files                                                                                                                                    |
+| `builtins`           | Host communication object (see below)                                                                                                                                       |
+| `python.*`           | Python-specific escapes (audit target, avoid)                                                                                                                               |
+| Standard builtins    | `abs`, `all`, `any`, `bool`, `dict`, `enumerate`, `float`, `int`, `len`, `list`, `max`, `min`, `print`, `range`, `repr`, `reversed`, `set`, `sorted`, `str`, `tuple`, `zip` |
+| `bazel(...)`         | Build-ref factory — references a Bazel target producing a container image; requires `target=` starting with `//` or `:` (from `//mlody/common/build_ref.mlody`)             |
+| `container(...)`     | Implementation factory — runs inside a container image; requires `build=bazel(...)` (from `//mlody/common/implementation.mlody`)                                            |
+| `shell_script(...)`  | Implementation factory — runs a shell script; requires exactly one of `content=` (inline) or `file=` (repo-relative path); optional `interpreter=` (from `//mlody/common/implementation.mlody`) |
+| `system_binary(...)` | Implementation factory — runs a pre-installed binary; requires `path=` as an absolute filesystem path (from `//mlody/common/implementation.mlody`)                         |
+| `host(...)`          | Executor factory — runs directly on the execution host (from `//mlody/common/executor.mlody`)                                                                               |
+| `kubernetes(...)`    | Executor factory — runs as a Kubernetes pod/job; optional `namespace=`, `service_account=` (from `//mlody/common/executor.mlody`)                                           |
+| `kubeflow(...)`      | Executor factory — runs as a Kubeflow Pipelines component; optional `pipeline_name=`, `experiment=` (from `//mlody/common/executor.mlody`)                                  |
+| `argo_workflow(...)` | Executor factory — runs as an Argo Workflows step; optional `namespace=`, `workflow_template=` (from `//mlody/common/executor.mlody`)                                       |
 
 `type`, file I/O, imports, and all other builtins are **not available**.
 
