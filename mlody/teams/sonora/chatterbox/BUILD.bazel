@@ -1,0 +1,29 @@
+load("//build/bzl:python.bzl", "o_py_binary", "o_py_library")
+
+o_py_library(
+    name = "chatterbox_lib",
+    srcs = [
+        "__init__.py",
+        "runtime.py",
+        "speak.py",
+    ],
+    tags = ["manual"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "@chatterbox_pip//chatterbox_tts",
+        "@chatterbox_pip//resemble_perth",
+        "@chatterbox_pip//torchaudio",
+        "@pip//click",
+    ],
+)
+
+o_py_binary(
+    name = "chatterbox",
+    srcs = ["speak.py"],
+    main = "speak.py",
+    package_collisions = "warning",
+    python_version = "3.11",
+    visibility = ["//visibility:public"],
+    deps = [":chatterbox_lib"],
+    data = ["//mlody/teams/sonora/assets:speech"],
+)

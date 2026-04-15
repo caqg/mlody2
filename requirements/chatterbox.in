@@ -1,0 +1,6 @@
+# Chatterbox Turbo TTS is intentionally isolated from the default Python 3.13
+# dependency set. Build and run it through the Python 3.11-only @chatterbox_pip
+# hub declared in build/modules/python.MODULE.bazel.
+chatterbox-tts>=0.1.4
+torchaudio
+resemble-perth

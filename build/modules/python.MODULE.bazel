@@ -18,6 +18,7 @@ python.toolchain(
 python.toolchain(
     python_version = "3.11.9",
 )
+use_repo(python, "python_3_11_9_x86_64-unknown-linux-gnu")
 
 pip.parse(
     hub_name = "pip",
@@ -29,4 +30,9 @@ pip.parse(
     python_version = "3.11.9",
     requirements_lock = "//requirements:all.txt",
 )
-use_repo(pip, "pip")
+pip.parse(
+    hub_name = "chatterbox_pip",
+    python_version = "3.11.9",
+    requirements_lock = "//requirements:chatterbox.txt",
+)
+use_repo(pip, "chatterbox_pip", "pip")

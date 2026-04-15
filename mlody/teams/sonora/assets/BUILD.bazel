@@ -1,0 +1,5 @@
+filegroup(
+    name = "speech",
+    srcs = glob(["speech/*.mp3"]),
+    visibility = ["//mlody/teams/sonora:__subpackages__"],
+)

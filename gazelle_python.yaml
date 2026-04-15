@@ -173,8 +173,6 @@ manifest:
     contourpy: contourpy
     copier: copier
     csvw: csvw
-    cuda.bindings: cuda_bindings
-    cuda.pathfinder: cuda_pathfinder
     curated_tokenizers: curated_tokenizers
     curated_transformers: curated_transformers
     cv2: opencv_python
@@ -229,10 +227,7 @@ manifest:
     networkx: networkx
     num2words: num2words
     numpy: numpy
-    nvidia.cu13.lib.libcheckpoint: nvidia_cuda_cupti
-    nvidia.cu13.lib.libnvperf_host: nvidia_cuda_cupti
-    nvidia.cu13.lib.libnvperf_target: nvidia_cuda_cupti
-    nvidia.cu13.lib.libpcsamplingutil: nvidia_cuda_cupti
+    nvidia: nvidia_nvtx_cu12
     opencv_contrib_python.libs.libopenblas-r0-f650aae0: opencv_contrib_python
     opencv_python.libs.libopenblas-r0-f650aae0: opencv_python
     packaging: packaging

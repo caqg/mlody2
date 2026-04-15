@@ -90,6 +90,8 @@ dependencies = [
   # Keep Kokoro and Misaki pinned to the latest pair that supports Python 3.13.
   "kokoro>=0.7.4,<0.7.5",
   "misaki[en]>=0.7.4,<0.7.5",
+  # Chatterbox is Python 3.11-only in this repo; keep its heavy TTS stack in
+  # requirements/chatterbox.in so the default Python 3.13 @pip hub stays usable.
 ]
 
 # See https://docs.astral.sh/ruff/configuration/
