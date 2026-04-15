@@ -13,7 +13,7 @@ o_py_library(
         "@chatterbox_pip//chatterbox_tts",
         "@chatterbox_pip//resemble_perth",
         "@chatterbox_pip//torchaudio",
-        "@pip//click",
+        "@chatterbox_pip//click",
     ],
 )
 

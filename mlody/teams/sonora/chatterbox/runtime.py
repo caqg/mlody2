@@ -120,8 +120,32 @@ def _patch_ml_dtypes() -> None:
         pass
 
 
+def _patch_librosa_resample_dtype() -> None:
+    """Chatterbox expects float32 conditioning audio; newer librosa resample
+    paths can return float64 arrays."""
+    try:
+        import librosa  # noqa: PLC0415
+        import numpy as np  # noqa: PLC0415
+    except ImportError:
+        return
+
+    original_resample = getattr(librosa, "resample", None)
+    if original_resample is None or getattr(original_resample, "_sonora_fp32_patch", False):
+        return
+
+    def _resample_fp32(*args: Any, **kwargs: Any) -> Any:
+        result = original_resample(*args, **kwargs)
+        if isinstance(result, np.ndarray) and result.dtype != np.float32:
+            return result.astype(np.float32, copy=False)
+        return result
+
+    setattr(_resample_fp32, "_sonora_fp32_patch", True)
+    librosa.resample = _resample_fp32
+
+
 def _load_model(device: str) -> Any:
     _patch_ml_dtypes()
+    _patch_librosa_resample_dtype()
     import perth
 
     if getattr(perth, "PerthImplicitWatermarker", None) is None:
