@@ -10,9 +10,10 @@ import sys
 import time
 from pathlib import Path
 
-from huggingface_hub import HfApi, model_info
+from huggingface_hub import HfApi, dataset_info, hf_hub_url, model_info
 
-HF_FILE = "https://huggingface.co/{repo}/resolve/{revision}/{path}"
+REPO_TYPE_MODEL = "model"
+REPO_TYPE_DATASET = "dataset"
 SEGMENT_SIZE = 64 * 1024 * 1024
 REQUEST_TIMEOUT = (10, 60)
 
@@ -202,8 +203,21 @@ def segmented_download(url, dest, token, workers):
 # -----------------------------------------
 
 
-def download_file(repo, revision, file_path, dest, token, workers):
-    url = HF_FILE.format(repo=repo, revision=revision, path=file_path)
+def download_file(
+    repo,
+    revision,
+    file_path,
+    dest,
+    token,
+    workers,
+    repo_type=REPO_TYPE_MODEL,
+):
+    url = hf_hub_url(
+        repo_id=repo,
+        filename=file_path,
+        repo_type=repo_type,
+        revision=revision,
+    )
 
     out = dest / file_path
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -256,7 +270,15 @@ def download_file(repo, revision, file_path, dest, token, workers):
 # -----------------------------------------
 
 
-def download_repo(repo, revision, dest, files, workers, token):
+def download_repo(
+    repo,
+    revision,
+    dest,
+    files,
+    workers,
+    token,
+    repo_type=REPO_TYPE_MODEL,
+):
     dest.mkdir(parents=True, exist_ok=True)
 
     start = time.time()
@@ -266,7 +288,16 @@ def download_repo(repo, revision, dest, files, workers, token):
 
         for f in files:
             futures.append(
-                pool.submit(download_file, repo, revision, f, dest, token, workers)
+                pool.submit(
+                    download_file,
+                    repo,
+                    revision,
+                    f,
+                    dest,
+                    token,
+                    workers,
+                    repo_type,
+                )
             )
 
         for i, fut in enumerate(concurrent.futures.as_completed(futures), 1):
@@ -277,9 +308,9 @@ def download_repo(repo, revision, dest, files, workers, token):
     print(f"\nFinished in {elapsed:.1f}s")
 
 
-def list_tags(repo, token):
+def list_tags(repo, token, repo_type=REPO_TYPE_MODEL):
     api = HfApi(token=token)
-    refs = api.list_repo_refs(repo_id=repo, repo_type="model")
+    refs = api.list_repo_refs(repo_id=repo, repo_type=repo_type)
 
     tags = refs.tags or []
 
@@ -295,9 +326,9 @@ def list_tags(repo, token):
         print(f"{tag.name}\t{target_commit}")
 
 
-def list_refs(repo, token):
+def list_refs(repo, token, repo_type=REPO_TYPE_MODEL):
     api = HfApi(token=token)
-    refs = api.list_repo_refs(repo_id=repo, repo_type="model")
+    refs = api.list_repo_refs(repo_id=repo, repo_type=repo_type)
 
     branches = refs.branches or []
     tags = refs.tags or []
@@ -334,6 +365,13 @@ def main():
     p = argparse.ArgumentParser()
     subparsers = p.add_subparsers(dest="command")
 
+    def add_dataset_flag(parser):
+        parser.add_argument(
+            "--dataset",
+            action="store_true",
+            help="Treat repo as a dataset repository (default: model repository).",
+        )
+
     p_download = subparsers.add_parser("download", help="Download a model snapshot")
     p_download.add_argument("repo")
     p_download.add_argument("-o", "--out", default=None)
@@ -344,17 +382,21 @@ def main():
         default=None,
         help="Specific model revision to download (commit SHA, branch, or tag). Defaults to latest when omitted.",
     )
+    add_dataset_flag(p_download)
 
     p_tags = subparsers.add_parser("tags", help="List available tags for a model repo")
     p_tags.add_argument("repo")
+    add_dataset_flag(p_tags)
     p_releases = subparsers.add_parser(
         "releases", help="List available releases (tags) for a model repo"
     )
     p_releases.add_argument("repo")
+    add_dataset_flag(p_releases)
     p_refs = subparsers.add_parser(
         "refs", help="List available branches and tags for a model repo"
     )
     p_refs.add_argument("repo")
+    add_dataset_flag(p_refs)
 
     # Backward compatibility: allow `model-download.py <repo> ...` without explicit subcommand.
     argv = sys.argv[1:]
@@ -371,6 +413,7 @@ def main():
     args = p.parse_args(argv)
 
     token = os.environ.get("HF_TOKEN")
+    repo_type = REPO_TYPE_DATASET if getattr(args, "dataset", False) else REPO_TYPE_MODEL
 
     if args.command is None:
         p.print_help()
@@ -379,29 +422,41 @@ def main():
     if args.command in {"tags", "releases"}:
         if args.command == "releases":
             print("Hugging Face releases are represented as git tags.\n")
-        list_tags(args.repo, token)
+        list_tags(args.repo, token, repo_type=repo_type)
         return
     if args.command == "refs":
-        list_refs(args.repo, token)
+        list_refs(args.repo, token, repo_type=repo_type)
         return
 
     repo = args.repo
     requested_revision = args.revision
     if args.out is None:
         vendor, model = repo.split("/")
-        base_out = Path(
-            f"~/.cache/mlody/artifacts/huggingface/{vendor}/{model}"
-        ).expanduser()
+        if repo_type == REPO_TYPE_DATASET:
+            base_out = Path(
+                f"~/.cache/mlody/artifacts/huggingface/datasets/{vendor}/{model}"
+            ).expanduser()
+        else:
+            base_out = Path(
+                f"~/.cache/mlody/artifacts/huggingface/{vendor}/{model}"
+            ).expanduser()
     else:
         base_out = Path(args.out)
 
     print(f"base_out: {base_out}")
 
-    print("Fetching model info...")
+    if repo_type == REPO_TYPE_DATASET:
+        info_kind = "dataset"
+        metadata_filename = "dataset_info.json"
+        print("Fetching dataset info...")
+        info = dataset_info(repo, revision=requested_revision, token=token)
+    else:
+        info_kind = "model"
+        metadata_filename = "model_info.json"
+        print("Fetching model info...")
+        info = model_info(repo, revision=requested_revision, token=token)
 
-    info = model_info(repo, revision=requested_revision, token=token)
-
-    print("\nModel info:")
+    print(f"\n{info_kind.capitalize()} info:")
     print(info)
 
     sha = info.sha
@@ -416,7 +471,7 @@ def main():
     model_dir = base_out / sha
 
     if model_dir.exists():
-        print(f"\nModel already downloaded at {model_dir}")
+        print(f"\n{info_kind.capitalize()} already downloaded at {model_dir}")
         return
 
     files = [s.rfilename for s in info.siblings]
@@ -438,12 +493,20 @@ def main():
     # save metadata
     model_dir.mkdir(parents=True, exist_ok=True)
 
-    with open(model_dir / "model_info.json", "w") as f:
+    with open(model_dir / metadata_filename, "w") as f:
         json.dump(info.__dict__, f, indent=2, default=str)
 
     print("\nDownloading files...")
 
-    download_repo(repo, sha, model_dir, files, workers, token)
+    download_repo(
+        repo,
+        sha,
+        model_dir,
+        files,
+        workers,
+        token,
+        repo_type=repo_type,
+    )
 
 
 if __name__ == "__main__":

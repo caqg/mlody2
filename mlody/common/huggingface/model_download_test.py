@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -170,3 +171,205 @@ def test_segmented_download_resumes_only_incomplete_segments(monkeypatch, tmp_pa
         assert metadata["completed_segments"] == [True, True, True]
     finally:
         monkeypatch.setattr(module, "SEGMENT_SIZE", original_segment_size)
+
+
+def test_download_file_uses_dataset_repo_type_in_hf_hub_url(monkeypatch, tmp_path):
+    module = _load_module()
+    destination_dir = tmp_path / "cache"
+    destination_dir.mkdir()
+    final_path = destination_dir / "train" / "data.parquet"
+    hf_hub_url_kwargs = {}
+    head_urls = []
+
+    def fake_hf_hub_url(**kwargs):
+        hf_hub_url_kwargs.update(kwargs)
+        return "https://example.invalid/dataset-file"
+
+    def fake_head(url, **kwargs):
+        del kwargs
+        head_urls.append(url)
+        return _FakeResponse(headers={"Content-Length": "4"})
+
+    def fake_get(url, **kwargs):
+        del url, kwargs
+        return _FakeResponse(chunks=[b"data"])
+
+    monkeypatch.setattr(module, "hf_hub_url", fake_hf_hub_url)
+    monkeypatch.setattr(module.requests, "head", fake_head)
+    monkeypatch.setattr(module.requests, "get", fake_get)
+
+    module.download_file(
+        "bigcode/the-stack",
+        "main",
+        "train/data.parquet",
+        destination_dir,
+        token=None,
+        workers=1,
+        repo_type="dataset",
+    )
+
+    assert hf_hub_url_kwargs["repo_id"] == "bigcode/the-stack"
+    assert hf_hub_url_kwargs["filename"] == "train/data.parquet"
+    assert hf_hub_url_kwargs["revision"] == "main"
+    assert hf_hub_url_kwargs["repo_type"] == "dataset"
+    assert head_urls == ["https://example.invalid/dataset-file"]
+    assert final_path.read_bytes() == b"data"
+
+
+def test_list_tags_and_refs_forward_dataset_repo_type(monkeypatch):
+    module = _load_module()
+    calls = []
+
+    class _FakeApi:
+        def __init__(self, token):
+            assert token == "hf-token"
+
+        def list_repo_refs(self, repo_id, repo_type):
+            calls.append((repo_id, repo_type))
+            return SimpleNamespace(
+                branches=[SimpleNamespace(name="main", target_commit="branch-sha")],
+                tags=[SimpleNamespace(name="v1.0", target_commit="tag-sha")],
+            )
+
+    monkeypatch.setattr(module, "HfApi", _FakeApi)
+
+    module.list_tags("bigcode/the-stack", "hf-token", repo_type="dataset")
+    module.list_refs("bigcode/the-stack", "hf-token", repo_type="dataset")
+
+    assert calls == [
+        ("bigcode/the-stack", "dataset"),
+        ("bigcode/the-stack", "dataset"),
+    ]
+
+
+def test_main_download_dataset_uses_dataset_info_and_dataset_cache_root(
+    monkeypatch, tmp_path
+):
+    module = _load_module()
+    captured = {}
+    fake_info = SimpleNamespace(
+        sha="dataset-sha",
+        siblings=[SimpleNamespace(rfilename="train/data.parquet")],
+    )
+
+    def fake_dataset_info(repo, revision=None, token=None):
+        captured["dataset_info"] = (repo, revision, token)
+        return fake_info
+
+    def fake_model_info(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("model_info should not be used for --dataset")
+
+    def fake_download_repo(
+        repo, revision, dest, files, workers, token, repo_type="model"
+    ):
+        captured["download_repo"] = {
+            "repo": repo,
+            "revision": revision,
+            "dest": dest,
+            "files": files,
+            "workers": workers,
+            "token": token,
+            "repo_type": repo_type,
+        }
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("HF_TOKEN", "hf-token")
+    monkeypatch.setattr(module, "dataset_info", fake_dataset_info)
+    monkeypatch.setattr(module, "model_info", fake_model_info)
+    monkeypatch.setattr(module, "download_repo", fake_download_repo)
+    monkeypatch.setattr(
+        module.sys,
+        "argv",
+        [
+            "model-download.py",
+            "download",
+            "--dataset",
+            "bigcode/the-stack",
+            "-w",
+            "1",
+        ],
+    )
+
+    module.main()
+
+    expected_dir = (
+        tmp_path
+        / ".cache"
+        / "mlody"
+        / "artifacts"
+        / "huggingface"
+        / "datasets"
+        / "bigcode"
+        / "the-stack"
+        / "dataset-sha"
+    )
+    assert captured["dataset_info"] == ("bigcode/the-stack", None, "hf-token")
+    assert captured["download_repo"]["dest"] == expected_dir
+    assert captured["download_repo"]["repo_type"] == "dataset"
+    assert (expected_dir / "dataset_info.json").exists()
+
+
+def test_main_backward_compatibility_defaults_to_model_repo(
+    monkeypatch, tmp_path
+):
+    module = _load_module()
+    captured = {}
+    fake_info = SimpleNamespace(
+        sha="model-sha",
+        siblings=[SimpleNamespace(rfilename="config.json")],
+    )
+
+    def fake_model_info(repo, revision=None, token=None):
+        captured["model_info"] = (repo, revision, token)
+        return fake_info
+
+    def fake_dataset_info(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("dataset_info should not be used without --dataset")
+
+    def fake_download_repo(
+        repo, revision, dest, files, workers, token, repo_type="model"
+    ):
+        captured["download_repo"] = {
+            "repo": repo,
+            "revision": revision,
+            "dest": dest,
+            "files": files,
+            "workers": workers,
+            "token": token,
+            "repo_type": repo_type,
+        }
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("HF_TOKEN", "hf-token")
+    monkeypatch.setattr(module, "dataset_info", fake_dataset_info)
+    monkeypatch.setattr(module, "model_info", fake_model_info)
+    monkeypatch.setattr(module, "download_repo", fake_download_repo)
+    monkeypatch.setattr(
+        module.sys,
+        "argv",
+        [
+            "model-download.py",
+            "google/gemma",
+            "-w",
+            "1",
+        ],
+    )
+
+    module.main()
+
+    expected_dir = (
+        tmp_path
+        / ".cache"
+        / "mlody"
+        / "artifacts"
+        / "huggingface"
+        / "google"
+        / "gemma"
+        / "model-sha"
+    )
+    assert captured["model_info"] == ("google/gemma", None, "hf-token")
+    assert captured["download_repo"]["dest"] == expected_dir
+    assert captured["download_repo"]["repo_type"] == "model"
+    assert (expected_dir / "model_info.json").exists()
