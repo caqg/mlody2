@@ -6,6 +6,8 @@ All test names trace back to scenarios in:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from starlarkish.core.struct import Struct
 
@@ -22,7 +24,7 @@ from mlody.core.location_composition import (
 # ---------------------------------------------------------------------------
 
 
-def _posix_loc(path: str, name: str = "loc") -> Struct:
+def _posix_loc(path: str | list[str], name: str = "loc") -> Struct:
     return Struct(kind="posix", type="posix", name=name, path=path)
 
 
@@ -50,7 +52,7 @@ class TestComposeLocationRules:
         parent_loc = _posix_loc("foo/bar")
         result = compose_location(parent_loc, None, "model_info")
         assert isinstance(result, Struct)
-        assert getattr(result, "path", None) == "foo/bar/model_info"
+        assert getattr(result, "path", None) == ["foo/bar/model_info"]
         assert getattr(result, "kind", None) == "location"
 
     def test_same_kind_delegates_to_registered_handler(self) -> None:
@@ -59,7 +61,7 @@ class TestComposeLocationRules:
         field_loc = _posix_loc("config")
         result = compose_location(parent_loc, field_loc, "config")
         assert isinstance(result, Struct)
-        assert getattr(result, "path", None) == "models/bert/config"
+        assert getattr(result, "path", None) == ["models/bert/config"]
 
     def test_different_kinds_raises_location_compose_error(self) -> None:
         """Scenario: Both present, different kinds raises _LocationComposeError."""
@@ -154,7 +156,7 @@ class TestPosixHandler:
         field_loc = _posix_loc("config", name="field_loc")
         result = compose_location(parent_loc, field_loc, "config")
         assert isinstance(result, Struct)
-        assert getattr(result, "path", None) == "models/bert/config"
+        assert getattr(result, "path", None) == ["models/bert/config"]
         assert getattr(result, "kind", None) == "location"
 
     def test_posix_handler_appends_field_name_when_field_loc_absent(self) -> None:
@@ -162,7 +164,7 @@ class TestPosixHandler:
         parent_loc = _posix_loc("models/bert", name="parent_loc")
         result = compose_location(parent_loc, None, "weights")
         assert isinstance(result, Struct)
-        assert getattr(result, "path", None) == "models/bert/weights"
+        assert getattr(result, "path", None) == ["models/bert/weights"]
 
     def test_posix_handler_preserves_parent_name(self) -> None:
         """Composed location carries the parent's name attribute."""
@@ -177,4 +179,55 @@ class TestPosixHandler:
         field_loc = _posix_loc("train_split")
         result = compose_location(parent_loc, field_loc, "train_split")
         assert isinstance(result, Struct)
-        assert getattr(result, "path", None) == "data/raw/train_split"
+        assert getattr(result, "path", None) == ["data/raw/train_split"]
+
+    def test_posix_handler_supports_path_lists(self) -> None:
+        """List paths compose using cartesian join semantics."""
+        parent_loc = _posix_loc(["root/a", "root/b"])
+        field_loc = _posix_loc(["x", "y"])
+        result = compose_location(parent_loc, field_loc, "ignored_name")
+        assert isinstance(result, Struct)
+        assert getattr(result, "path", None) == [
+            "root/a/x",
+            "root/a/y",
+            "root/b/x",
+            "root/b/y",
+        ]
+
+    def test_posix_handler_expands_glob_patterns(self, tmp_path: Path) -> None:
+        """Glob patterns are expanded after parent/field path concatenation."""
+        data_root = tmp_path / "data"
+        data_root.mkdir()
+        (data_root / "train-0001.parquet").write_text("x")
+        (data_root / "train-0002.parquet").write_text("y")
+        (data_root / "test-0001.parquet").write_text("z")
+
+        parent_loc = _posix_loc(str(data_root))
+        field_loc = _posix_loc("train-*")
+        result = compose_location(parent_loc, field_loc, "ignored_name")
+        assert isinstance(result, Struct)
+        assert getattr(result, "path", None) == [
+            str(data_root / "train-0001.parquet"),
+            str(data_root / "train-0002.parquet"),
+        ]
+
+    def test_posix_handler_expands_glob_patterns_under_tilde_home(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Glob expansion resolves '~' in parent paths before matching."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        data_root = tmp_path / ".cache" / "glob-home"
+        data_root.mkdir(parents=True)
+        (data_root / "train-0001.parquet").write_text("x")
+        (data_root / "train-0002.parquet").write_text("y")
+
+        parent_loc = _posix_loc("~/.cache/glob-home")
+        field_loc = _posix_loc("train-000*")
+        result = compose_location(parent_loc, field_loc, "ignored_name")
+        assert isinstance(result, Struct)
+        assert getattr(result, "path", None) == [
+            str(data_root / "train-0001.parquet"),
+            str(data_root / "train-0002.parquet"),
+        ]

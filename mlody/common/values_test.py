@@ -254,6 +254,178 @@ def test_value_with_representation_json_carries_representation_struct() -> None:
     assert v.representation.name == "json"
 
 
+def test_value_with_representation_text_defaults_markup_to_none() -> None:
+    ev = _eval('value(name="x", type=integer(), location=s3(), representation=text())')
+    v = ev._values_by_name["x"]
+    assert v.representation is not None
+    assert v.representation.kind == "representation"
+    assert v.representation.name == "text"
+    assert v.representation.markup == "none"
+
+
+def test_value_with_representation_text_accepts_markdown_markup() -> None:
+    ev = _eval(
+        'value(name="x", type=integer(), location=s3(), representation=text(markup="markdown"))'
+    )
+    v = ev._values_by_name["x"]
+    assert v.representation is not None
+    assert v.representation.name == "text"
+    assert v.representation.markup == "markdown"
+
+
+def test_value_with_representation_text_invalid_markup_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="text\\(markup"):
+        _eval(
+            'value(name="x", type=integer(), location=s3(), representation=text(markup="html"))'
+        )
+
+
+def test_value_with_representation_parquet_defaults() -> None:
+    ev = _eval(
+        'typedef(name="row_schema", base=record(fields=[field(name="id", type=integer())]))\n'
+        'value(name="x", type=integer(), location=s3(), representation=parquet(schema=row_schema()))'
+    )
+    v = ev._values_by_name["x"]
+    assert v.representation is not None
+    assert v.representation.name == "parquet"
+    assert v.representation.multifile is False
+    assert v.representation.schema.name == "row_schema"
+    assert "min_length" not in v.representation.attributes
+    assert "max_length" not in v.representation.attributes
+    assert "total_min_length" not in v.representation.attributes
+    assert "total_max_length" not in v.representation.attributes
+
+
+def test_value_with_representation_parquet_supports_string_schema_ref() -> None:
+    ev = _eval(
+        'typedef(name="row_schema", base=record(fields=[field(name="id", type=integer())]))\n'
+        'value(name="x", type=integer(), location=s3(), representation=parquet(schema="row_schema"))'
+    )
+    v = ev._values_by_name["x"]
+    assert v.representation is not None
+    assert v.representation.name == "parquet"
+    assert v.representation.schema.name == "row_schema"
+
+
+def test_value_with_representation_parquet_accepts_bounds_and_multifile() -> None:
+    ev = _eval(
+        'typedef(name="row_schema", base=record(fields=[field(name="id", type=integer())]))\n'
+        'value(\n'
+        '  name="x",\n'
+        '  type=integer(),\n'
+        '  location=s3(),\n'
+        '  representation=parquet(\n'
+        '    schema=row_schema(),\n'
+        '    multifile=True,\n'
+        '    min_length=1,\n'
+        '    max_length=10,\n'
+        '    total_min_length=2,\n'
+        '    total_max_length=20,\n'
+        '  ),\n'
+        ')\n'
+    )
+    v = ev._values_by_name["x"]
+    assert v.representation is not None
+    assert v.representation.name == "parquet"
+    assert v.representation.multifile is True
+    assert v.representation.min_length == 1
+    assert v.representation.max_length == 10
+    assert v.representation.total_min_length == 2
+    assert v.representation.total_max_length == 20
+
+
+def test_value_with_representation_parquet_rejects_non_record_schema() -> None:
+    with pytest.raises(TypeError, match="record typedef"):
+        _eval(
+            'value(name="x", type=integer(), location=s3(), representation=parquet(schema=integer()))'
+        )
+
+
+def test_value_with_representation_parquet_rejects_unknown_schema() -> None:
+    with pytest.raises(ValueError, match="unknown type"):
+        _eval(
+            'value(name="x", type=integer(), location=s3(), representation=parquet(schema="missing_schema"))'
+        )
+
+
+def test_value_with_representation_parquet_rejects_invalid_file_bounds() -> None:
+    with pytest.raises(ValueError, match="min_length"):
+        _eval(
+            'typedef(name="row_schema", base=record(fields=[field(name="id", type=integer())]))\n'
+            'value(name="x", type=integer(), location=s3(), representation=parquet(schema=row_schema(), min_length=5, max_length=1))'
+        )
+
+
+def test_value_with_representation_parquet_rejects_invalid_total_bounds() -> None:
+    with pytest.raises(ValueError, match="total_min_length"):
+        _eval(
+            'typedef(name="row_schema", base=record(fields=[field(name="id", type=integer())]))\n'
+            'value(name="x", type=integer(), location=s3(), representation=parquet(schema=row_schema(), total_min_length=10, total_max_length=1))'
+        )
+
+
+def test_value_with_representation_csv_defaults() -> None:
+    ev = _eval('value(name="x", type=integer(), location=s3(), representation=csv())')
+    v = ev._values_by_name["x"]
+    assert v.representation is not None
+    assert v.representation.name == "csv"
+    assert v.representation.separator == ","
+    assert v.representation.header_required is True
+    assert v.representation.multifile is False
+    assert "schema" not in v.representation.attributes
+
+
+def test_value_with_representation_csv_accepts_optional_record_schema() -> None:
+    ev = _eval(
+        'typedef(name="row_schema", base=record(fields=[field(name="id", type=integer())]))\n'
+        'value(name="x", type=integer(), location=s3(), representation=csv(schema=row_schema()))'
+    )
+    v = ev._values_by_name["x"]
+    assert v.representation is not None
+    assert v.representation.name == "csv"
+    assert v.representation.schema.name == "row_schema"
+
+
+def test_value_with_representation_csv_accepts_string_schema_and_options() -> None:
+    ev = _eval(
+        'typedef(name="row_schema", base=record(fields=[field(name="id", type=integer())]))\n'
+        'value(\n'
+        '  name="x",\n'
+        '  type=integer(),\n'
+        '  location=s3(),\n'
+        '  representation=csv(schema="row_schema", separator="|", header_required=False, multifile=True),\n'
+        ')\n'
+    )
+    v = ev._values_by_name["x"]
+    assert v.representation is not None
+    assert v.representation.name == "csv"
+    assert v.representation.schema.name == "row_schema"
+    assert v.representation.separator == "|"
+    assert v.representation.header_required is False
+    assert v.representation.multifile is True
+
+
+def test_value_with_representation_csv_rejects_non_record_schema() -> None:
+    with pytest.raises(TypeError, match="record typedef"):
+        _eval(
+            'value(name="x", type=integer(), location=s3(), representation=csv(schema=integer()))'
+        )
+
+
+def test_value_with_representation_csv_rejects_unknown_schema() -> None:
+    with pytest.raises(ValueError, match="unknown type"):
+        _eval(
+            'value(name="x", type=integer(), location=s3(), representation=csv(schema="missing_schema"))'
+        )
+
+
+def test_value_with_representation_csv_rejects_empty_separator() -> None:
+    with pytest.raises(ValueError, match="separator"):
+        _eval(
+            'value(name="x", type=integer(), location=s3(), representation=csv(separator=""))'
+        )
+
+
 # ---------------------------------------------------------------------------
 # TC-014 (5.2): value() without representation has representation=None
 # ---------------------------------------------------------------------------

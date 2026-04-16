@@ -1,28 +1,259 @@
 load("//mlody/core/rule.mlody", "rule")
-load("//mlody/common/attrs.mlody", "attr")
+load("//mlody/common/attrs.mlody", "attr", "validate_attr_value")
+
+
+def _make_representation_factory(rep_struct):
+    allowed = python.getattr(rep_struct, "_allowed_attrs", {})
+    mandatory = python.getattr(rep_struct, "_attrs_mandatory", set())
+    current_attrs = python.getattr(rep_struct, "attributes", {})
+
+    def factory(**kwargs):
+        for k in kwargs:
+            if k not in allowed:
+                raise TypeError(
+                    rep_struct.name + "() got unexpected attribute " + repr(k)
+                    + ". Allowed: " + repr(set(allowed))
+                )
+        for k, v in kwargs.items():
+            validate_attr_value(k, v, allowed[k])
+
+        for k in mandatory:
+            if k not in current_attrs and k not in kwargs:
+                raise TypeError(
+                    rep_struct.name + "() missing mandatory attribute " + repr(k)
+                )
+
+        if not kwargs:
+            return rep_struct
+
+        merged_attrs = dict(current_attrs)
+        merged_attrs.update(kwargs)
+
+        rep_fields = {
+            "kind": "representation",
+            "name": rep_struct.name,
+            "attributes": merged_attrs,
+            "_allowed_attrs": allowed,
+            "_attrs_mandatory": mandatory,
+        }
+        for k, v in merged_attrs.items():
+            rep_fields[k] = v
+        return Struct(**rep_fields)
+
+    return factory
 
 
 def _representation_impl(ctx):
-    rep_struct = Struct(
-        kind="representation",
-        name=ctx.attr.name,
-    )
+    attrs_spec = {}
+    attrs_mandatory = set()
+    default_attrs = {}
+
+    attrs_arg = python.getattr(ctx.attr, "attrs", None)
+    if attrs_arg != None:
+        for attr_name, attr_def in attrs_arg.as_mapping().items():
+            declared_type = python.getattr(attr_def, "type", None)
+            if declared_type == None:
+                raise ValueError(
+                    f"representation {ctx.attr.name!r}: attrs[{attr_name!r}] must declare a type"
+                )
+            attrs_spec[attr_name] = declared_type
+
+            metadata = python.getattr(attr_def, "metadata", None)
+            is_mandatory = (
+                python.getattr(metadata, "mandatory", True)
+                if metadata != None
+                else True
+            )
+            if is_mandatory:
+                attrs_mandatory.add(attr_name)
+
+            default_value = (
+                python.getattr(metadata, "default", None)
+                if metadata != None
+                else None
+            )
+            if default_value != None:
+                default_attrs[attr_name] = default_value
+
+    rep_fields = {
+        "kind": "representation",
+        "name": ctx.attr.name,
+        "attributes": default_attrs,
+        "_allowed_attrs": attrs_spec,
+        "_attrs_mandatory": attrs_mandatory,
+    }
+    for k, v in default_attrs.items():
+        rep_fields[k] = v
+
+    rep_struct = Struct(**rep_fields)
     builtins.register(ctx.kind, rep_struct)
-    # Inject a zero-argument factory consistent with how location factories work.
-    # The factory returns the same singleton struct each call since representations
-    # have no configurable parameters in this phase.
-    captured = rep_struct
-    builtins.inject(ctx.attr.name, lambda: captured)
+    builtins.inject(ctx.attr.name, _make_representation_factory(rep_struct))
     return rep_struct
 
 
 representation = rule(
     implementation=_representation_impl,
     kind="representation",
-    attrs={},
+    attrs={
+        "attrs": attr(type="dict", mandatory=False, default=None),
+    },
 )
 
 _json_struct = representation(name="json")
+_json_factory = _make_representation_factory(_json_struct)
 
 def json():
-    return _json_struct
+    return _json_factory()
+
+
+_TEXT_MARKUP_VALUES = {"none", "orgmode", "markdown", "markdown-github"}
+_text_struct = representation(
+    name="text",
+    attrs={
+        "markup": attr(type="string", mandatory=True, default="none"),
+    },
+)
+_text_factory = _make_representation_factory(_text_struct)
+
+
+def text(*, markup="none"):
+    if markup not in _TEXT_MARKUP_VALUES:
+        raise ValueError(
+            "text(markup=...) must be one of "
+            + repr(_TEXT_MARKUP_VALUES)
+            + ", got "
+            + repr(markup)
+        )
+    return _text_factory(markup=markup)
+
+
+_parquet_struct = representation(
+    name="parquet",
+    attrs={
+        "schema": attr(type="type_ref", mandatory=True),
+        "multifile": attr(type="bool", mandatory=False, default=False),
+        "min_length": attr(type="integer", mandatory=False),
+        "max_length": attr(type="integer", mandatory=False),
+        "total_min_length": attr(type="integer", mandatory=False),
+        "total_max_length": attr(type="integer", mandatory=False),
+    },
+)
+_parquet_factory = _make_representation_factory(_parquet_struct)
+
+
+def _resolve_type_ref(type_ref):
+    if isinstance(type_ref, str):
+        try:
+            return builtins.lookup("type", type_ref)
+        except:
+            raise ValueError("parquet(schema=...): unknown type " + repr(type_ref))
+    return type_ref
+
+
+def _assert_record_schema(schema, *, rep_name, allow_none=False):
+    if schema == None:
+        if allow_none:
+            return None
+        raise TypeError(rep_name + "(schema=...) requires a schema")
+
+    resolved = _resolve_type_ref(schema)
+    if type(resolved) != "struct" or python.getattr(resolved, "kind", None) != "type":
+        raise TypeError(
+            rep_name + "(schema=...) expects a type struct or type name, got "
+            + repr(type(resolved))
+        )
+    root_kind = python.getattr(resolved, "_root_kind", None)
+    if root_kind != "record" and python.getattr(resolved, "type", None) != "record":
+        raise TypeError(
+            rep_name + "(schema=...) expects a record typedef, got "
+            + repr(python.getattr(resolved, "name", None))
+            + " with root kind "
+            + repr(root_kind)
+        )
+    return resolved
+
+
+def _validate_length_bounds(*, min_length, max_length, label):
+    min_key = label + "min_length"
+    max_key = label + "max_length"
+    if min_length != None and min_length < 0:
+        raise ValueError(min_key + " must be >= 0, got " + repr(min_length))
+    if max_length != None and max_length < 0:
+        raise ValueError(max_key + " must be >= 0, got " + repr(max_length))
+    if min_length != None and max_length != None and min_length > max_length:
+        raise ValueError(
+            min_key
+            + " must be <= "
+            + max_key
+            + ", got "
+            + repr(min_length)
+            + " > "
+            + repr(max_length)
+        )
+
+
+def parquet(
+    *,
+    schema,
+    multifile=False,
+    min_length=None,
+    max_length=None,
+    total_min_length=None,
+    total_max_length=None,
+):
+    resolved_schema = _assert_record_schema(schema, rep_name="parquet")
+    _validate_length_bounds(min_length=min_length, max_length=max_length, label="")
+    _validate_length_bounds(
+        min_length=total_min_length,
+        max_length=total_max_length,
+        label="total_",
+    )
+    kwargs = {
+        "schema": resolved_schema,
+        "multifile": multifile,
+    }
+    if min_length != None:
+        kwargs["min_length"] = min_length
+    if max_length != None:
+        kwargs["max_length"] = max_length
+    if total_min_length != None:
+        kwargs["total_min_length"] = total_min_length
+    if total_max_length != None:
+        kwargs["total_max_length"] = total_max_length
+    return _parquet_factory(**kwargs)
+
+
+_csv_struct = representation(
+    name="csv",
+    attrs={
+        "schema": attr(type="type_ref", mandatory=False),
+        "separator": attr(type="string", mandatory=False, default=","),
+        "header_required": attr(type="bool", mandatory=False, default=True),
+        "multifile": attr(type="bool", mandatory=False, default=False),
+    },
+)
+_csv_factory = _make_representation_factory(_csv_struct)
+
+
+def _validate_csv_separator(separator):
+    if separator == "":
+        raise ValueError("csv(separator=...) must be a non-empty string")
+
+
+def csv(
+    *,
+    schema=None,
+    separator=",",
+    header_required=True,
+    multifile=False,
+):
+    _validate_csv_separator(separator)
+    resolved_schema = _assert_record_schema(schema, rep_name="csv", allow_none=True)
+    kwargs = {
+        "separator": separator,
+        "header_required": header_required,
+        "multifile": multifile,
+    }
+    if resolved_schema != None:
+        kwargs["schema"] = resolved_schema
+    return _csv_factory(**kwargs)

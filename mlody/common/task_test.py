@@ -384,6 +384,59 @@ def test_task_conflicting_representations_raise_value_error() -> None:
         )
 
 
+def test_task_conflicting_text_representation_markup_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="representation"):
+        _eval(
+            'task(\n'
+            '  name="t",\n'
+            '  inputs=[],\n'
+            '  outputs=[value(name="out", type=string(), location=s3(), representation=text(markup="markdown"))],\n'
+            '  action=action(\n'
+            '    name="act",\n'
+            '    inputs=[],\n'
+            '    outputs=[value(name="out", type=string(), location=s3(), representation=text(markup="orgmode"))],\n'
+            '    implementation=shell_script(content="dummy")\n'
+            '  )\n'
+            ')\n'
+        )
+
+
+def test_task_conflicting_parquet_representation_schema_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="representation"):
+        _eval(
+            'typedef(name="schema_a", base=record(fields=[field(name="id", type=integer())]))\n'
+            'typedef(name="schema_b", base=record(fields=[field(name="name", type=string())]))\n'
+            'task(\n'
+            '  name="t",\n'
+            '  inputs=[],\n'
+            '  outputs=[value(name="out", type=string(), location=s3(), representation=parquet(schema=schema_a()))],\n'
+            '  action=action(\n'
+            '    name="act",\n'
+            '    inputs=[],\n'
+            '    outputs=[value(name="out", type=string(), location=s3(), representation=parquet(schema=schema_b()))],\n'
+            '    implementation=shell_script(content="dummy")\n'
+            '  )\n'
+            ')\n'
+        )
+
+
+def test_task_conflicting_csv_representation_separator_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="representation"):
+        _eval(
+            'task(\n'
+            '  name="t",\n'
+            '  inputs=[],\n'
+            '  outputs=[value(name="out", type=string(), location=s3(), representation=csv(separator=","))],\n'
+            '  action=action(\n'
+            '    name="act",\n'
+            '    inputs=[],\n'
+            '    outputs=[value(name="out", type=string(), location=s3(), representation=csv(separator="|"))],\n'
+            '    implementation=shell_script(content="dummy")\n'
+            '  )\n'
+            ')\n'
+        )
+
+
 # ---------------------------------------------------------------------------
 # TC-018 (5.6): scoped value registered by _register_scoped_value carries representation
 # ---------------------------------------------------------------------------

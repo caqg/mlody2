@@ -59,10 +59,23 @@ def _field_values_compatible(field_name, left, right):
         return False
 
     if field_name == "representation":
-        # Structural equality by kind + name; representations have no attributes in this phase.
-        return (
-            python.getattr(left, "name", None) == python.getattr(right, "name", None)
-        )
+        if python.getattr(left, "name", None) != python.getattr(right, "name", None):
+            return False
+
+        left_attrs = _as_dict_or_none(python.getattr(left, "attributes", None)) or {}
+        right_attrs = _as_dict_or_none(python.getattr(right, "attributes", None)) or {}
+
+        # Backward compatibility for legacy text() structs that only carried
+        # a top-level markup field.
+        if python.getattr(left, "name", None) == "text":
+            if "markup" not in left_attrs and python.hasattr(left, "markup"):
+                left_attrs = dict(left_attrs)
+                left_attrs["markup"] = python.getattr(left, "markup", "none")
+            if "markup" not in right_attrs and python.hasattr(right, "markup"):
+                right_attrs = dict(right_attrs)
+                right_attrs["markup"] = python.getattr(right, "markup", "none")
+
+        return left_attrs == right_attrs
 
     left_attrs = _as_dict_or_none(python.getattr(left, "attributes", None)) or {}
     right_attrs = _as_dict_or_none(python.getattr(right, "attributes", None)) or {}

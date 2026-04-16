@@ -830,8 +830,8 @@ builtins.register("value", Struct(
         assert isinstance(result, Struct)
         loc = getattr(result, "location", None)
         assert loc is not None
-        # Composed path: "models/bert/info"
-        assert getattr(loc, "path", None) == "models/bert/info"
+        # Composed path list: ["models/bert/info"]
+        assert getattr(loc, "path", None) == ["models/bert/info"]
 
     def test_field_found_via_type_attribute_fallback(
         self, fs: FakeFilesystem
@@ -969,7 +969,7 @@ builtins.register("value", Struct(
         assert getattr(result, "name", None) == "kind"
         loc = getattr(result, "location", None)
         assert loc is not None
-        assert getattr(loc, "path", None) == "models/kind_dir"
+        assert getattr(loc, "path", None) == ["models/kind_dir"]
 
 
 class TestRecordFieldTraversalErrorPropagation:
@@ -1090,8 +1090,8 @@ builtins.register("value", Struct(
 
         assert isinstance(result, Struct)
         loc = getattr(result, "location", None)
-        # Single-level compose: "root/path" / "a_dir" → "root/path/a_dir"
-        assert getattr(loc, "path", None) == "root/path/a_dir"
+        # Single-level compose yields path list with one element.
+        assert getattr(loc, "path", None) == ["root/path/a_dir"]
 
     def test_two_level_traversal_composes_locations(
         self, fs: FakeFilesystem
@@ -1133,7 +1133,7 @@ builtins.register("value", Struct(
 
         assert isinstance(result, Struct)
         loc = getattr(result, "location", None)
-        assert getattr(loc, "path", None) == "root/path/a_dir/b_dir"
+        assert getattr(loc, "path", None) == ["root/path/a_dir/b_dir"]
 
     def test_traversal_failure_returns_mlody_unresolved_value_without_raising(
         self, fs: FakeFilesystem

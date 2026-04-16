@@ -27,6 +27,7 @@ Design rationale (design.md D-5):
 
 from __future__ import annotations
 
+import glob
 import os
 from typing import Callable
 
@@ -129,8 +130,19 @@ def compose_location(
 # ---------------------------------------------------------------------------
 
 
-def _get_path(loc: Struct) -> str:
-    """Extract the ``path`` from a location Struct.
+def _as_path_list(path_value: object) -> list[str]:
+    """Coerce a location ``path`` value to a list of strings."""
+    if path_value is None:
+        return []
+    if isinstance(path_value, str):
+        return [path_value]
+    if isinstance(path_value, (list, tuple)):
+        return [str(p) for p in path_value]
+    return [str(path_value)]
+
+
+def _get_paths(loc: Struct) -> list[str]:
+    """Extract ``path`` from a location Struct as a list of strings.
 
     Location structs produced by the mlody evaluator store ``path`` inside
     the ``attributes`` dict (via ``extend_attrs``).  Test fixtures may store
@@ -138,11 +150,19 @@ def _get_path(loc: Struct) -> str:
     """
     direct = getattr(loc, "path", None)
     if direct is not None:
-        return str(direct)
+        return _as_path_list(direct)
     attrs = getattr(loc, "attributes", None)
     if isinstance(attrs, dict):
-        return str(attrs.get("path", ""))
-    return ""
+        return _as_path_list(attrs.get("path"))
+    return []
+
+
+def _expand_glob(path_pattern: str) -> list[str]:
+    """Expand ``path_pattern`` if it contains glob syntax."""
+    expanded_pattern = os.path.expanduser(path_pattern)
+    if not glob.has_magic(expanded_pattern):
+        return [path_pattern]
+    return sorted(glob.glob(expanded_pattern))
 
 
 def _posix_compose(
@@ -150,19 +170,34 @@ def _posix_compose(
     field_loc: Struct | None,
     field_name: str,
 ) -> Struct:
-    """Compose two posix locations by joining their paths.
+    """Compose two posix locations by joining and expanding path lists.
 
-    Uses ``os.path.join(parent.path, field.path)`` when ``field_loc`` is
-    present, or ``os.path.join(parent.path, field_name)`` when ``field_loc``
-    is ``None``.
-
-    The returned Struct has ``kind="location"`` and inherits ``name`` from the
-    parent location (matching the observed shape of location structs in mlody).
+    - Parent/field ``path`` values are normalized to lists of strings.
+    - Parent list is joined with field list using cartesian composition.
+    - Every composed element is glob-expanded.
+    - The returned location always uses ``path`` as ``list[str]``.
     """
-    field_path: str = (
-        _get_path(field_loc) if field_loc is not None else field_name
-    ) or field_name
-    composed_path = os.path.join(_get_path(parent_loc), field_path)
+    parent_paths = _get_paths(parent_loc)
+    if not parent_paths:
+        parent_paths = [""]
+
+    field_paths = _get_paths(field_loc) if field_loc is not None else [field_name]
+    if not field_paths:
+        field_paths = [field_name]
+
+    composed_patterns = [
+        os.path.join(parent_path, field_path)
+        for parent_path in parent_paths
+        for field_path in field_paths
+    ]
+    expanded_paths = [p for pattern in composed_patterns for p in _expand_glob(pattern)]
+    # If no globs matched anything, keep the raw composed paths.
+    if not expanded_paths:
+        expanded_paths = composed_patterns
+
+    # Preserve order while deduplicating.
+    seen: set[str] = set()
+    composed_path = [p for p in expanded_paths if not (p in seen or seen.add(p))]
     return Struct(
         kind="location",
         type="posix",

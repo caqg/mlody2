@@ -2,30 +2,53 @@ load("//mlody/core/rule.mlody", "rule")
 load("//mlody/common/attrs.mlody", "attr", "extend_attrs", "validate_attr_value")
 
 
+def _coerce_posix_path_value(path_value):
+    if isinstance(path_value, str):
+        return [path_value]
+    if isinstance(path_value, list):
+        return list(path_value)
+    if isinstance(path_value, tuple):
+        return list(path_value)
+    return path_value
+
+
+def _normalize_location_kwargs(loc_struct, kwargs):
+    normalized = dict(kwargs)
+    if python.getattr(loc_struct, "type", None) == "posix" and "path" in normalized:
+        normalized["path"] = _coerce_posix_path_value(normalized["path"])
+    return normalized
+
+
 def _make_location_factory(loc_struct):
     allowed = python.getattr(loc_struct, "_allowed_attrs", {})
 
     def factory(**kwargs):
+        normalized_kwargs = _normalize_location_kwargs(loc_struct, kwargs)
+
         for k in kwargs:
             if k not in allowed:
                 raise TypeError(
                     loc_struct.name + "() got unexpected attribute " + repr(k)
                     + ". Allowed: " + repr(set(allowed))
                 )
-        for k, v in kwargs.items():
+        for k, v in normalized_kwargs.items():
             validate_attr_value(k, v, allowed[k])
 
         if not kwargs:
             return loc_struct
 
-        captured_kwargs = dict(kwargs)
+        captured_kwargs = dict(normalized_kwargs)
         def extra_validator(value):
             # v1 unification: equality check per constrained attribute
             for k, expected in captured_kwargs.items():
-                if value != expected:
+                actual = value
+                if python.getattr(loc_struct, "type", None) == "posix" and k == "path":
+                    actual = _coerce_posix_path_value(value)
+                    expected = _coerce_posix_path_value(expected)
+                if actual != expected:
                     raise ValueError(
                         f"location constraint {k!r} not satisfied: "
-                        f"expected {expected!r}, got {value!r}"
+                        f"expected {expected!r}, got {actual!r}"
                     )
             return True
 
@@ -112,7 +135,7 @@ location(
 location(
     name = "posix",
     attrs = {
-        "path": attr(type="string", mandatory=False),
+        "path": attr(type="string_list", mandatory=False),
     },
 )
 

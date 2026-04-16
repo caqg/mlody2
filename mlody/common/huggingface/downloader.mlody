@@ -86,7 +86,7 @@ task(
             value(name="workers", type=integer(min=1, max=8), default=1, location=named_arg()),
             #        value(name="workers", type=integer(min=1, max=8), default=1, location=named_arg(), effects=["no-hash-contribution"]),
         ],
-        implementation = container(build=bazel(target=":model=download")), #[":model-download"],
+        implementation = container(build=bazel(target=":model-download")), #[":model-download"],
         requirements = [
 	    # storage, gpu, memory, network also goes here.
             cpu_requirement(2),

@@ -148,18 +148,33 @@ def test_posix_bare_validator_accepts_any_value() -> None:
 
 
 def test_posix_with_path_validator_accepts_matching_value() -> None:
-    """TC-005: posix(path='/data').validator('/data') passes."""
+    """TC-005: posix(path='/data').validator accepts equivalent path forms."""
     ev = _eval("result = posix(path='/data')")
     result = ev._module_globals[ev.root_path / "test.mlody"]["result"]
+    assert result.validator(["/data"]) is True
     assert result.validator("/data") is True
 
 
 def test_posix_with_path_validator_rejects_other_value() -> None:
-    """TC-005: posix(path='/data').validator('/other') raises ValueError."""
+    """TC-005: posix(path='/data').validator rejects non-matching path."""
     ev = _eval("result = posix(path='/data')")
     result = ev._module_globals[ev.root_path / "test.mlody"]["result"]
     with pytest.raises(ValueError):
         result.validator("/other")
+
+
+def test_posix_path_is_stored_as_string_list_when_given_as_string() -> None:
+    """posix(path='x') stores location path as a one-element list."""
+    ev = _eval("result = posix(path='x')")
+    result = ev._module_globals[ev.root_path / "test.mlody"]["result"]
+    assert result.attributes["path"] == ["x"]
+
+
+def test_posix_path_accepts_explicit_list() -> None:
+    """posix(path=['a', 'b']) keeps the list shape."""
+    ev = _eval("result = posix(path=['a', 'b'])")
+    result = ev._module_globals[ev.root_path / "test.mlody"]["result"]
+    assert result.attributes["path"] == ["a", "b"]
 
 
 # ---------------------------------------------------------------------------
