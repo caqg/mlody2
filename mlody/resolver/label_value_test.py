@@ -303,6 +303,39 @@ builtins.register("value", struct(
 ))
 """
 
+TOP_JSON_VALUE_MLODY = """\
+builtins.register("value", struct(
+    kind="value",
+    name="meta",
+    type=struct(kind="type", type="top", name="top", _root_kind="top"),
+    location=struct(kind="posix", type="posix", name="meta_loc", path=["/project/teams/myroot/pkg/meta.json"]),
+    representation=struct(kind="representation", name="json", attributes={}),
+    default=None,
+    source=None,
+    _lineage=[],
+))
+"""
+
+RECORD_WITH_JSON_FIELD_MLODY = """\
+info_field = struct(
+    name="info",
+    type=struct(kind="type", type="top", name="top", _root_kind="top"),
+    location=struct(kind="posix", type="posix", name="info_loc", path=["meta.json"]),
+    representation=struct(kind="representation", name="json", attributes={}),
+)
+dataset_type = struct(kind="record", name="DatasetType", fields=[info_field])
+builtins.register("value", struct(
+    kind="value",
+    name="dataset",
+    type=dataset_type,
+    location=struct(kind="posix", type="posix", name="base_loc", path=["/project/teams/myroot/pkg"]),
+    representation=None,
+    default=None,
+    source=None,
+    _lineage=[],
+))
+"""
+
 
 # ---------------------------------------------------------------------------
 # 6.5 Golden test: label resolves to MlodyValueValue
@@ -351,6 +384,60 @@ class TestValueKind:
 
         assert isinstance(result, MlodyUnresolvedValue)
         assert "nonexistent" in result.reason
+
+    def test_top_json_value_supports_dotted_lookup_from_posix_file(
+        self,
+        fs: FakeFilesystem,
+    ) -> None:
+        ws = _make_workspace(
+            fs,
+            extra_files={
+                "teams/myroot/pkg/foo.mlody": TOP_JSON_VALUE_MLODY,
+                "teams/myroot/pkg/meta.json": '{"sha":"abc123","likes":16}',
+            },
+        )
+
+        label = parse_label("@myroot//pkg/foo:meta.sha")
+        result = resolve_label_to_value(label, ws)
+
+        assert isinstance(result, _RawAttrValue)
+        assert result.value == "abc123"
+
+    def test_record_field_top_json_supports_dotted_lookup_from_posix_file(
+        self,
+        fs: FakeFilesystem,
+    ) -> None:
+        ws = _make_workspace(
+            fs,
+            extra_files={
+                "teams/myroot/pkg/foo.mlody": RECORD_WITH_JSON_FIELD_MLODY,
+                "teams/myroot/pkg/meta.json": '{"sha":"2d738f56","downloads":3448}',
+            },
+        )
+
+        label = parse_label("@myroot//pkg/foo:dataset.info.sha")
+        result = resolve_label_to_value(label, ws)
+
+        assert isinstance(result, _RawAttrValue)
+        assert result.value == "2d738f56"
+
+    def test_top_json_value_missing_key_returns_unresolved(
+        self,
+        fs: FakeFilesystem,
+    ) -> None:
+        ws = _make_workspace(
+            fs,
+            extra_files={
+                "teams/myroot/pkg/foo.mlody": TOP_JSON_VALUE_MLODY,
+                "teams/myroot/pkg/meta.json": '{"sha":"abc123"}',
+            },
+        )
+
+        label = parse_label("@myroot//pkg/foo:meta.missing")
+        result = resolve_label_to_value(label, ws)
+
+        assert isinstance(result, MlodyUnresolvedValue)
+        assert "missing" in result.reason
 
 
 class TestWorkspaceVirtualAttributes:
@@ -738,9 +825,10 @@ def _make_struct(**kwargs: object) -> Any:
     return Struct(**kwargs)
 
 
-def _make_loc(path: str) -> Any:
+def _make_loc(path: str | list[str]) -> Any:
     """Construct a minimal posix location Struct."""
-    return _make_struct(kind="posix", type="posix", name="loc", path=path)
+    paths = [path] if isinstance(path, str) else list(path)
+    return _make_struct(kind="posix", type="posix", name="loc", path=paths)
 
 
 # ---------------------------------------------------------------------------
@@ -777,7 +865,7 @@ class TestTraverseOneStep:
         loc = getattr(rebuilt, "location", None)
         assert loc is not None
         # compose_location joins parent path + field path
-        assert getattr(loc, "path", None) == "models/bert/info"
+        assert getattr(loc, "path", None) == ["models/bert/info"]
 
     def test_all_non_location_fields_preserved_in_rebuilt_struct(self) -> None:
         """Scenario: all non-location fields are preserved in the rebuilt Struct."""
@@ -909,7 +997,7 @@ class TestValueTraversalStrategyMultiLevel:
 
         assert isinstance(result, MlodyValueValue)
         loc = getattr(result.struct, "location", None)
-        assert getattr(loc, "path", None) == "root/path/a_dir/b_file"
+        assert getattr(loc, "path", None) == ["root/path/a_dir/b_file"]
 
     def test_two_level_traversal_intermediate_field_has_no_location(self) -> None:
         """Scenario: Two-level traversal where intermediate field has no location.
@@ -926,7 +1014,7 @@ class TestValueTraversalStrategyMultiLevel:
 
         assert isinstance(result, MlodyValueValue)
         loc = getattr(result.struct, "location", None)
-        assert getattr(loc, "path", None) == "root/path/field_a/b_file"
+        assert getattr(loc, "path", None) == ["root/path/field_a/b_file"]
 
     def test_two_level_traversal_leaf_field_has_no_location(self) -> None:
         """Scenario: Two-level traversal where leaf field has no location.
@@ -943,7 +1031,7 @@ class TestValueTraversalStrategyMultiLevel:
 
         assert isinstance(result, MlodyValueValue)
         loc = getattr(result.struct, "location", None)
-        assert getattr(loc, "path", None) == "root/path/a_dir/field_b"
+        assert getattr(loc, "path", None) == ["root/path/a_dir/field_b"]
 
     def test_three_level_traversal_accumulates_locations(self) -> None:
         """Scenario: Three-level traversal accumulates r/a/b/c."""
@@ -959,7 +1047,7 @@ class TestValueTraversalStrategyMultiLevel:
 
         assert isinstance(result, MlodyValueValue)
         loc = getattr(result.struct, "location", None)
-        assert getattr(loc, "path", None) == "r/a/b/c"
+        assert getattr(loc, "path", None) == ["r/a/b/c"]
 
     def test_non_record_type_at_intermediate_step_returns_unresolved(self) -> None:
         """Scenario: Non-record type at an intermediate step returns MlodyUnresolvedValue.

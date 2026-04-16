@@ -24,6 +24,7 @@ See also: design.md §D-3, §D-6.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
@@ -206,6 +207,141 @@ class _RawAttrValue(MlodyValue):
 
     value: object
     label: "Label"
+
+
+def _is_top_type(type_obj: object) -> bool:
+    if getattr(type_obj, "kind", None) != "type":
+        return False
+    return (
+        getattr(type_obj, "name", None) == "top"
+        or getattr(type_obj, "type", None) == "top"
+        or getattr(type_obj, "_root_kind", None) == "top"
+    )
+
+
+def _is_json_representation(rep_obj: object) -> bool:
+    return (
+        getattr(rep_obj, "kind", None) == "representation"
+        and getattr(rep_obj, "name", None) == "json"
+    )
+
+
+def _posix_location_paths(location: object) -> list[str]:
+    if getattr(location, "type", None) != "posix":
+        return []
+    path_value = getattr(location, "path", None)
+    if path_value is None and isinstance(getattr(location, "attributes", None), dict):
+        path_value = location.attributes.get("path")
+    if path_value is None:
+        return []
+    if isinstance(path_value, str):
+        return [path_value]
+    if isinstance(path_value, (list, tuple)):
+        return [str(p) for p in path_value]
+    return [str(path_value)]
+
+
+def _traverse_json_backed_value(
+    value: object,
+    path: tuple[str, ...],
+    label: "Label",
+) -> MlodyValue | None:
+    """Traverse JSON content for top/json/posix values.
+
+    Returns ``None`` when the value is not eligible for JSON-backed traversal.
+    Returns ``MlodyUnresolvedValue`` for eligible-but-failed traversal.
+    Returns ``_RawAttrValue`` on success.
+    """
+    value_type = getattr(value, "type", None)
+    representation = getattr(value, "representation", None)
+    if not (_is_top_type(value_type) and _is_json_representation(representation)):
+        return None
+
+    location = getattr(value, "location", None)
+    paths = _posix_location_paths(location)
+    if not paths:
+        return MlodyUnresolvedValue(
+            label=label,
+            reason=(
+                "json-backed traversal currently requires a posix location path; "
+                f"got location type {getattr(location, 'type', None)!r}"
+            ),
+        )
+
+    existing = [os.path.expanduser(p) for p in paths if os.path.isfile(os.path.expanduser(p))]
+    if not existing:
+        return MlodyUnresolvedValue(
+            label=label,
+            reason=(
+                "json-backed traversal could not find a readable file at location paths: "
+                f"{paths!r}"
+            ),
+        )
+    if len(existing) > 1:
+        return MlodyUnresolvedValue(
+            label=label,
+            reason=(
+                "json-backed traversal requires a single file, but multiple files were found: "
+                f"{existing!r}"
+            ),
+        )
+
+    json_path = existing[0]
+    try:
+        with open(json_path, encoding="utf-8") as fh:
+            current: object = json.load(fh)
+    except Exception as exc:
+        return MlodyUnresolvedValue(
+            label=label,
+            reason=f"failed to parse JSON at {json_path!r}: {exc}",
+        )
+
+    for i, segment in enumerate(path):
+        if isinstance(current, dict):
+            if segment not in current:
+                traversed = ".".join(path[:i])
+                parent = f" under '{traversed}'" if traversed else ""
+                return MlodyUnresolvedValue(
+                    label=label,
+                    reason=(
+                        f"json key {segment!r} not found{parent} in {json_path!r} "
+                        f"(label: {label!r})"
+                    ),
+                )
+            current = current[segment]
+            continue
+
+        if isinstance(current, list):
+            try:
+                idx = int(segment)
+            except ValueError:
+                return MlodyUnresolvedValue(
+                    label=label,
+                    reason=(
+                        f"expected numeric list index while traversing JSON, got {segment!r} "
+                        f"(label: {label!r})"
+                    ),
+                )
+            if idx < 0 or idx >= len(current):
+                return MlodyUnresolvedValue(
+                    label=label,
+                    reason=(
+                        f"list index {idx} out of range while traversing JSON "
+                        f"(len={len(current)}, label: {label!r})"
+                    ),
+                )
+            current = current[idx]
+            continue
+
+        return MlodyUnresolvedValue(
+            label=label,
+            reason=(
+                f"cannot traverse segment {segment!r} on JSON value of type "
+                f"{type(current).__name__} (label: {label!r})"
+            ),
+        )
+
+    return _RawAttrValue(value=current, label=label)
 
 
 # A sentinel label used only in error messages from _wrap_struct above.
@@ -401,6 +537,13 @@ class ValueTraversalStrategy:
                         or getattr(next_type, "_root_kind", None) == "record"
                     )
                     if not next_is_record:
+                        json_result = _traverse_json_backed_value(
+                            rebuilt,
+                            tuple(path[i + 1:]),
+                            label,
+                        )
+                        if json_result is not None:
+                            return json_result
                         type_kind = getattr(next_type, "kind", "<unknown>")
                         return MlodyUnresolvedValue(
                             label=label,
@@ -411,6 +554,10 @@ class ValueTraversalStrategy:
                         )
                 current = rebuilt
             return MlodyValueValue(struct=current)
+
+        json_result = _traverse_json_backed_value(value, path, label)
+        if json_result is not None:
+            return json_result
 
         # Non-record root or single-segment non-record path: generic getattr
         # traversal.  This is the OQ-13 extension seam — a future per-kind
