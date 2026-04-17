@@ -14,6 +14,7 @@ o_py_library(
     deps = [
         "//mlody/core:core_lib",
         "//mlody/core:location_composition_lib",
+        "//mlody/core:traversal_grammar",  # keep — label_value.py imports PathSegment types for engine dispatch
         "//mlody/db:db_lib",  # keep — resolver.py imports open_db, write_evaluation, compute_local_diff_sha
     ],
 )

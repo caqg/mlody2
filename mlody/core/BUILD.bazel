@@ -1,5 +1,39 @@
 load("//build/bzl:python.bzl", "o_py_library", "o_py_test")
 
+o_py_library(
+    name = "traversal_grammar",
+    srcs = ["traversal_grammar.py"],
+    visibility = ["//:__subpackages__"],
+)
+
+o_py_test(
+    name = "traversal_grammar_test",
+    srcs = ["traversal_grammar_test.py"],
+    deps = [
+        ":traversal_grammar",
+        "@pip//pytest",
+    ],
+)
+
+o_py_library(
+    name = "traversal_parser",
+    srcs = ["traversal_parser.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":traversal_grammar",
+    ],
+)
+
+o_py_test(
+    name = "traversal_parser_test",
+    srcs = ["traversal_parser_test.py"],
+    deps = [
+        ":traversal_grammar",
+        ":traversal_parser",
+        "@pip//pytest",
+    ],
+)
+
 exports_files(["rule.mlody"])
 
 o_py_library(
@@ -74,6 +108,7 @@ o_py_library(
         ":location_composition_lib",
         ":source_parser_lib",
         ":targets_lib",
+        ":traversal_parser",
         "//common/python/starlarkish/core:core_lib",
         "//common/python/starlarkish/evaluator:evaluator_lib",
         "//mlody/common:context_lib",  # keep
@@ -121,6 +156,7 @@ o_py_library(
     visibility = ["//:__subpackages__"],
     deps = [
         ":location_composition_lib",
+        ":traversal_parser",
         "//common/python/starlarkish/core:core_lib",
         "//common/python/starlarkish/evaluator:evaluator_lib",
         "//mlody/common:common_lib",

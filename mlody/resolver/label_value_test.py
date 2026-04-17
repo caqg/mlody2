@@ -655,7 +655,13 @@ class TestExtensibilitySeam:
         sentinel_value = MlodyFolderValue(path="stub", children=[])
 
         class StubWidgetStrategy:
-            """Minimal TraversalStrategy implementation for testing the seam."""
+            """Minimal TraversalStrategy implementation for testing the seam.
+
+            Accepts **kwargs so that the strategy is compatible with
+            traversal_error_policy being threaded through by resolve_label_to_value
+            (design D-4: existing implementations that declare **kwargs satisfy the
+            protocol under Python's structural subtyping rules).
+            """
 
             def __init__(self) -> None:
                 self.called = False
@@ -666,6 +672,7 @@ class TestExtensibilitySeam:
                 value: object,
                 path: tuple[str, ...],
                 label: Any,
+                **kwargs: object,
             ) -> MlodyValue:
                 self.called = True
                 self.call_args = (value, path, label)
@@ -1131,3 +1138,588 @@ class TestValueTraversalStrategyMultiLevel:
         # getattr fallback resolves sub.value → 99 → _RawAttrValue
         assert isinstance(result, _RawAttrValue)
         assert result.value == 99
+
+
+# ---------------------------------------------------------------------------
+# Group 3 — Traversal Engine unit tests
+# Tasks 3.1–3.8
+# ---------------------------------------------------------------------------
+
+
+class TestTraversalErrorPolicy:
+    """Requirement: TraversalErrorPolicy enum (task 3.1)."""
+
+    def test_importable_from_label_value(self) -> None:
+        """Scenario: TraversalErrorPolicy members are importable."""
+        from mlody.resolver.label_value import TraversalErrorPolicy
+
+        assert TraversalErrorPolicy.SKIP is not None
+        assert TraversalErrorPolicy.RAISE is not None
+
+    def test_skip_and_raise_are_distinct(self) -> None:
+        from mlody.resolver.label_value import TraversalErrorPolicy
+
+        assert TraversalErrorPolicy.SKIP != TraversalErrorPolicy.RAISE
+
+
+class TestMlodyVectorValue:
+    """Requirement: MlodyVectorValue type (task 3.2)."""
+
+    def test_is_mlody_value_subtype(self) -> None:
+        """Scenario: MlodyVectorValue is a MlodyValue subtype."""
+        from mlody.resolver.label_value import MlodyVectorValue
+
+        v = MlodyVectorValue(elements=())
+        assert isinstance(v, MlodyValue)
+
+    def test_carries_element_tuple(self) -> None:
+        """Scenario: MlodyVectorValue carries its element tuple."""
+        from mlody.resolver.label_value import MlodyVectorValue
+
+        e1 = MlodyValueValue(struct=_make_struct(x=1))
+        e2 = MlodyValueValue(struct=_make_struct(x=2))
+        v = MlodyVectorValue(elements=(e1, e2))
+        assert len(v.elements) == 2
+        assert v.elements[0] is e1
+        assert v.elements[1] is e2
+
+    def test_frozen_and_hashable(self) -> None:
+        from mlody.resolver.label_value import MlodyVectorValue
+
+        v = MlodyVectorValue(elements=())
+        d = {v: "ok"}
+        assert d[v] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# _engine_index_step  (task 3.4)
+# ---------------------------------------------------------------------------
+
+
+class TestEngineIndexStep:
+    """Requirement: IndexSegment on vector-typed value."""
+
+    def _engine(self) -> object:
+        from mlody.resolver.label_value import _engine_index_step
+
+        return _engine_index_step
+
+    def _make_vector(self, *values: object) -> object:
+        from mlody.resolver.label_value import MlodyVectorValue
+
+        elems = tuple(MlodyValueValue(struct=_make_struct(v=v)) for v in values)
+        return MlodyVectorValue(elements=elems)
+
+    def test_in_bounds_positive_index_returns_element(self) -> None:
+        """Scenario: IndexSegment on in-bounds positive index returns element."""
+        from mlody.core.traversal_grammar import IndexSegment
+        from mlody.resolver.label_value import TraversalErrorPolicy, _engine_index_step
+
+        vec = self._make_vector(10, 20, 30)
+        result = _engine_index_step(vec, IndexSegment(index=1), TraversalErrorPolicy.RAISE, _make_label())
+        assert isinstance(result, MlodyValueValue)
+        assert getattr(result.struct, "v", None) == 20
+
+    def test_in_bounds_negative_index_returns_last_element(self) -> None:
+        """Scenario: IndexSegment on in-bounds negative index returns element."""
+        from mlody.core.traversal_grammar import IndexSegment
+        from mlody.resolver.label_value import TraversalErrorPolicy, _engine_index_step
+
+        vec = self._make_vector(10, 20, 30)
+        result = _engine_index_step(vec, IndexSegment(index=-1), TraversalErrorPolicy.RAISE, _make_label())
+        assert isinstance(result, MlodyValueValue)
+        assert getattr(result.struct, "v", None) == 30
+
+    def test_out_of_bounds_raise_policy_returns_unresolved(self) -> None:
+        """Scenario: IndexSegment out-of-bounds with RAISE policy returns MlodyUnresolvedValue."""
+        from mlody.core.traversal_grammar import IndexSegment
+        from mlody.resolver.label_value import TraversalErrorPolicy, _engine_index_step
+
+        vec = self._make_vector(10, 20, 30)
+        result = _engine_index_step(vec, IndexSegment(index=10), TraversalErrorPolicy.RAISE, _make_label())
+        assert isinstance(result, MlodyUnresolvedValue)
+        assert "10" in result.reason
+
+    def test_out_of_bounds_skip_policy_returns_empty_vector(self) -> None:
+        """Scenario: IndexSegment out-of-bounds with SKIP policy returns empty vector."""
+        from mlody.core.traversal_grammar import IndexSegment
+        from mlody.resolver.label_value import MlodyVectorValue, TraversalErrorPolicy, _engine_index_step
+
+        vec = self._make_vector(10, 20, 30)
+        result = _engine_index_step(vec, IndexSegment(index=10), TraversalErrorPolicy.SKIP, _make_label())
+        assert isinstance(result, MlodyVectorValue)
+        assert len(result.elements) == 0
+
+    def test_type_mismatch_raise_policy_returns_unresolved(self) -> None:
+        """Scenario: IndexSegment on non-vector value with RAISE policy."""
+        from mlody.core.traversal_grammar import IndexSegment
+        from mlody.resolver.label_value import TraversalErrorPolicy, _engine_index_step
+
+        scalar = MlodyValueValue(struct=_make_struct(x=1))
+        result = _engine_index_step(scalar, IndexSegment(index=0), TraversalErrorPolicy.RAISE, _make_label())
+        assert isinstance(result, MlodyUnresolvedValue)
+
+
+# ---------------------------------------------------------------------------
+# _engine_key_step  (task 3.5)
+# ---------------------------------------------------------------------------
+
+
+class TestEngineKeyStep:
+    """Requirement: KeySegment on map-typed value."""
+
+    def _make_dict_value(self, d: dict[str, object]) -> object:
+        from mlody.resolver.label_value import MlodyVectorValue  # noqa: F401
+        from mlody.resolver.label_value import _RawAttrValue  # noqa: F401
+
+        # We represent a dict-backed value as a _RawAttrValue wrapping a Python dict.
+        # The engine must handle this case.
+        from mlody.resolver.label_value import _RawAttrValue
+
+        return _RawAttrValue(value=d, label=_make_label())
+
+    def test_present_key_returns_value(self) -> None:
+        """Scenario: KeySegment on present key returns value."""
+        from mlody.core.traversal_grammar import KeySegment
+        from mlody.resolver.label_value import TraversalErrorPolicy, _engine_key_step
+
+        d = {"f1": 0.95, "acc": 0.87}
+        val = self._make_dict_value(d)
+        result = _engine_key_step(val, KeySegment(key="f1"), TraversalErrorPolicy.RAISE, _make_label())
+        # Should return a value wrapping 0.95
+        assert result is not None
+        from mlody.resolver.label_value import _RawAttrValue
+        assert isinstance(result, _RawAttrValue)
+        assert result.value == 0.95
+
+    def test_missing_key_raise_policy_returns_unresolved(self) -> None:
+        """Scenario: KeySegment on missing key with RAISE policy returns MlodyUnresolvedValue."""
+        from mlody.core.traversal_grammar import KeySegment
+        from mlody.resolver.label_value import TraversalErrorPolicy, _engine_key_step
+
+        val = self._make_dict_value({"f1": 0.95})
+        result = _engine_key_step(val, KeySegment(key="recall"), TraversalErrorPolicy.RAISE, _make_label())
+        assert isinstance(result, MlodyUnresolvedValue)
+        assert "recall" in result.reason
+
+    def test_missing_key_skip_policy_returns_empty_vector(self) -> None:
+        """Scenario: KeySegment on missing key with SKIP policy returns empty vector."""
+        from mlody.core.traversal_grammar import KeySegment
+        from mlody.resolver.label_value import MlodyVectorValue, TraversalErrorPolicy, _engine_key_step
+
+        val = self._make_dict_value({"f1": 0.95})
+        result = _engine_key_step(val, KeySegment(key="recall"), TraversalErrorPolicy.SKIP, _make_label())
+        assert isinstance(result, MlodyVectorValue)
+        assert len(result.elements) == 0
+
+    def test_non_dict_value_raise_returns_unresolved(self) -> None:
+        """Non-dict-backed value with RAISE policy → MlodyUnresolvedValue."""
+        from mlody.core.traversal_grammar import KeySegment
+        from mlody.resolver.label_value import TraversalErrorPolicy, _engine_key_step
+
+        scalar = MlodyValueValue(struct=_make_struct(x=1))
+        result = _engine_key_step(scalar, KeySegment(key="x"), TraversalErrorPolicy.RAISE, _make_label())
+        assert isinstance(result, MlodyUnresolvedValue)
+
+
+# ---------------------------------------------------------------------------
+# _engine_wildcard_step  (task 3.6)
+# ---------------------------------------------------------------------------
+
+
+class TestEngineWildcardStep:
+    """Requirement: WildcardSegment — flat vector of all immediate children."""
+
+    def test_wildcard_on_vector_value_returns_all_elements(self) -> None:
+        """Scenario: WildcardSegment on MlodyVectorValue returns all elements."""
+        from mlody.core.traversal_grammar import WildcardSegment
+        from mlody.resolver.label_value import MlodyVectorValue, TraversalErrorPolicy, _engine_wildcard_step
+
+        e1 = MlodyValueValue(struct=_make_struct(v=1))
+        e2 = MlodyValueValue(struct=_make_struct(v=2))
+        e3 = MlodyValueValue(struct=_make_struct(v=3))
+        vec = MlodyVectorValue(elements=(e1, e2, e3))
+
+        result = _engine_wildcard_step(vec, WildcardSegment(), TraversalErrorPolicy.RAISE, _make_label())
+        assert isinstance(result, MlodyVectorValue)
+        assert list(result.elements) == [e1, e2, e3]
+
+    def test_wildcard_on_dict_backed_returns_all_values(self) -> None:
+        """Scenario: WildcardSegment on dict-backed value returns all values."""
+        from mlody.core.traversal_grammar import WildcardSegment
+        from mlody.resolver.label_value import MlodyVectorValue, TraversalErrorPolicy, _RawAttrValue, _engine_wildcard_step
+
+        d = {"x": 1, "y": 2}
+        val = _RawAttrValue(value=d, label=_make_label())
+
+        result = _engine_wildcard_step(val, WildcardSegment(), TraversalErrorPolicy.RAISE, _make_label())
+        assert isinstance(result, MlodyVectorValue)
+        assert len(result.elements) == 2
+        values = [getattr(e, "value", None) for e in result.elements if isinstance(e, _RawAttrValue)]
+        assert 1 in values
+        assert 2 in values
+
+    def test_wildcard_on_record_struct_returns_all_fields(self) -> None:
+        """Scenario: WildcardSegment on record Struct returns all fields."""
+        from mlody.core.traversal_grammar import WildcardSegment
+        from mlody.resolver.label_value import MlodyVectorValue, TraversalErrorPolicy, _engine_wildcard_step
+
+        field_a = _make_field("fa", "a")
+        field_b = _make_field("fb", "b")
+        root_value = _make_value_struct_with_fields("root", [field_a, field_b])
+
+        result = _engine_wildcard_step(root_value, WildcardSegment(), TraversalErrorPolicy.RAISE, _make_label())
+        assert isinstance(result, MlodyVectorValue)
+        assert len(result.elements) == 2
+
+    def test_wildcard_on_non_traversable_raise_returns_unresolved(self) -> None:
+        """Non-traversable value with RAISE policy → MlodyUnresolvedValue."""
+        from mlody.core.traversal_grammar import WildcardSegment
+        from mlody.resolver.label_value import TraversalErrorPolicy, _engine_wildcard_step
+
+        # A scalar MlodyUnresolvedValue is not traversable
+        scalar = MlodyUnresolvedValue(label=_make_label(), reason="already unresolved")
+        result = _engine_wildcard_step(scalar, WildcardSegment(), TraversalErrorPolicy.RAISE, _make_label())
+        assert isinstance(result, MlodyUnresolvedValue)
+
+    def test_wildcard_on_non_traversable_skip_returns_empty_vector(self) -> None:
+        """Non-traversable value with SKIP policy → MlodyVectorValue(elements=())."""
+        from mlody.core.traversal_grammar import WildcardSegment
+        from mlody.resolver.label_value import MlodyVectorValue, TraversalErrorPolicy, _engine_wildcard_step
+
+        scalar = MlodyUnresolvedValue(label=_make_label(), reason="already unresolved")
+        result = _engine_wildcard_step(scalar, WildcardSegment(), TraversalErrorPolicy.SKIP, _make_label())
+        assert isinstance(result, MlodyVectorValue)
+        assert len(result.elements) == 0
+
+
+# ---------------------------------------------------------------------------
+# _engine_recursive_descent_step  (task 3.7)
+# ---------------------------------------------------------------------------
+
+
+class TestEngineRecursiveDescentStep:
+    """Requirement: RecursiveDescentSegment — flat vector of all descendants."""
+
+    def test_recursive_descent_on_flat_vector(self) -> None:
+        """Scenario: RecursiveDescentSegment on flat vector collects all elements."""
+        from mlody.core.traversal_grammar import RecursiveDescentSegment
+        from mlody.resolver.label_value import MlodyVectorValue, TraversalErrorPolicy, _engine_recursive_descent_step
+
+        e1 = MlodyValueValue(struct=_make_struct(v=1))
+        e2 = MlodyValueValue(struct=_make_struct(v=2))
+        e3 = MlodyValueValue(struct=_make_struct(v=3))
+        vec = MlodyVectorValue(elements=(e1, e2, e3))
+
+        result = _engine_recursive_descent_step(vec, RecursiveDescentSegment(), TraversalErrorPolicy.RAISE, _make_label())
+        assert isinstance(result, MlodyVectorValue)
+        assert list(result.elements) == [e1, e2, e3]
+
+    def test_recursive_descent_on_nested_record_depth_first(self) -> None:
+        """Scenario: RecursiveDescentSegment on nested structure — depth-first order.
+
+        root has fields [a, b]; a has children [a1, a2]; b is scalar.
+        Expected DFS order: a, a1, a2, b
+        """
+        from mlody.core.traversal_grammar import RecursiveDescentSegment
+        from mlody.resolver.label_value import MlodyVectorValue, TraversalErrorPolicy, _engine_recursive_descent_step
+
+        a1 = _make_field("a1", "a1")
+        a2 = _make_field("a2", "a2")
+        # field 'a' is record-typed with children [a1, a2]
+        a = _make_field("a", "a", child_fields=[a1, a2])
+        b = _make_field("b", "b")  # scalar (no child fields)
+        root_value = _make_value_struct_with_fields("root", [a, b])
+
+        result = _engine_recursive_descent_step(
+            root_value, RecursiveDescentSegment(), TraversalErrorPolicy.RAISE, _make_label()
+        )
+        assert isinstance(result, MlodyVectorValue)
+        # Must have 4 descendants: a, a1, a2, b
+        assert len(result.elements) == 4
+
+    def test_recursive_descent_non_traversable_skip_returns_empty(self) -> None:
+        """Non-traversable root with SKIP policy → MlodyVectorValue(elements=())."""
+        from mlody.core.traversal_grammar import RecursiveDescentSegment
+        from mlody.resolver.label_value import MlodyVectorValue, TraversalErrorPolicy, _engine_recursive_descent_step
+
+        scalar = MlodyUnresolvedValue(label=_make_label(), reason="already unresolved")
+        result = _engine_recursive_descent_step(
+            scalar, RecursiveDescentSegment(), TraversalErrorPolicy.SKIP, _make_label()
+        )
+        assert isinstance(result, MlodyVectorValue)
+        assert len(result.elements) == 0
+
+    def test_recursive_descent_non_traversable_raise_returns_unresolved(self) -> None:
+        """Non-traversable root with RAISE policy → MlodyUnresolvedValue."""
+        from mlody.core.traversal_grammar import RecursiveDescentSegment
+        from mlody.resolver.label_value import TraversalErrorPolicy, _engine_recursive_descent_step
+
+        scalar = MlodyUnresolvedValue(label=_make_label(), reason="already unresolved")
+        result = _engine_recursive_descent_step(
+            scalar, RecursiveDescentSegment(), TraversalErrorPolicy.RAISE, _make_label()
+        )
+        assert isinstance(result, MlodyUnresolvedValue)
+
+
+# ---------------------------------------------------------------------------
+# Group 4 — _traverse_one_step extension and ValueTraversalStrategy integration
+# Tasks 4.1–4.6
+# ---------------------------------------------------------------------------
+
+
+class TestTraverseOneStepExtension:
+    """Requirement: _traverse_one_step dispatches all PathSegment kinds (task 4.1)."""
+
+    def test_field_segment_behaves_identically_to_str(self) -> None:
+        """Scenario: _traverse_one_step with FieldSegment behaves identically to str input."""
+        from mlody.core.traversal_grammar import FieldSegment
+        from mlody.resolver.label_value import TraversalErrorPolicy, _traverse_one_step
+
+        field_loc = _make_loc("info")
+        field_obj = _make_struct(name="model_info", type=None, location=field_loc)
+        record_type = _make_struct(kind="record", name="T", fields=[field_obj])
+        parent_loc = _make_loc("models/bert")
+        current = _make_struct(kind="value", name="m", type=record_type, location=parent_loc)
+
+        result_str = _traverse_one_step(current, "model_info", (), _make_label(), TraversalErrorPolicy.RAISE)
+        result_seg = _traverse_one_step(current, FieldSegment(name="model_info"), (), _make_label(), TraversalErrorPolicy.RAISE)
+
+        assert type(result_str) is type(result_seg)
+        if isinstance(result_str, tuple):
+            assert isinstance(result_seg, tuple)
+            rebuilt_str, _ = result_str
+            rebuilt_seg, _ = result_seg
+            assert getattr(rebuilt_str, "location", None) == getattr(rebuilt_seg, "location", None)
+
+    def test_str_backward_compat_preserved(self) -> None:
+        """Scenario: _traverse_one_step with str backward compatibility preserved."""
+        from mlody.resolver.label_value import TraversalErrorPolicy, _traverse_one_step
+
+        field_loc = _make_loc("a")
+        field_obj = _make_struct(name="field_a", type=None, location=field_loc)
+        record_type = _make_struct(kind="record", name="T", fields=[field_obj])
+        current = _make_struct(kind="value", name="m", type=record_type, location=_make_loc("root"))
+
+        # Both call signatures must produce the same result
+        r1 = _traverse_one_step(current, "field_a", (), _make_label())
+        r2 = _traverse_one_step(current, "field_a", (), _make_label(), TraversalErrorPolicy.RAISE)
+        assert type(r1) is type(r2)
+
+    def test_wildcard_segment_delegates_to_wildcard_handler(self) -> None:
+        """Scenario: _traverse_one_step with WildcardSegment delegates to wildcard handler."""
+        from mlody.core.traversal_grammar import WildcardSegment
+        from mlody.resolver.label_value import MlodyVectorValue, TraversalErrorPolicy, _traverse_one_step
+
+        field_a = _make_field("fa", "a")
+        field_b = _make_field("fb", "b")
+        root_value = _make_value_struct_with_fields("root", [field_a, field_b])
+
+        result = _traverse_one_step(root_value, WildcardSegment(), (), _make_label(), TraversalErrorPolicy.RAISE)
+        assert isinstance(result, MlodyVectorValue)
+        assert len(result.elements) == 2
+
+    def test_index_segment_delegates_to_index_handler(self) -> None:
+        """Scenario: _traverse_one_step with IndexSegment delegates to index handler."""
+        from mlody.core.traversal_grammar import IndexSegment
+        from mlody.resolver.label_value import MlodyVectorValue, TraversalErrorPolicy, _traverse_one_step
+
+        e1 = MlodyValueValue(struct=_make_struct(v=1))
+        e2 = MlodyValueValue(struct=_make_struct(v=2))
+        vec = MlodyVectorValue(elements=(e1, e2))
+
+        result = _traverse_one_step(vec, IndexSegment(index=1), (), _make_label(), TraversalErrorPolicy.RAISE)
+        assert isinstance(result, MlodyValueValue)
+        assert getattr(result.struct, "v", None) == 2
+
+
+class TestValueTraversalStrategyEngine:
+    """Requirement: Engine integration into ValueTraversalStrategy (tasks 4.2–4.4)."""
+
+    def _strategy(self) -> object:
+        from mlody.resolver.label_value import ValueTraversalStrategy
+
+        return ValueTraversalStrategy()
+
+    def test_pure_field_segment_path_unchanged(self) -> None:
+        """Scenario: Pure FieldSegment path continues to use existing record-aware loop."""
+        label = _make_label()
+        field_b = _make_field("field_b", "b")
+        field_a = _make_field("field_a", "a", child_fields=[field_b])
+        root_value = _make_value_struct_with_fields("root", [field_a])
+
+        from mlody.resolver.label_value import TraversalErrorPolicy
+
+        result = self._strategy().traverse(root_value, ("field_a", "field_b"), label, traversal_error_policy=TraversalErrorPolicy.RAISE)
+        assert isinstance(result, MlodyValueValue)
+
+    def test_wildcard_path_returns_vector_value(self) -> None:
+        """Scenario: Wildcard path returns MlodyVectorValue from strategy."""
+        from mlody.core.traversal_grammar import WildcardSegment
+        from mlody.resolver.label_value import MlodyVectorValue, TraversalErrorPolicy
+
+        label = _make_label()
+        fa = _make_field("fa", "a")
+        fb = _make_field("fb", "b")
+        fc = _make_field("fc", "c")
+        root_value = _make_value_struct_with_fields("root", [fa, fb, fc])
+
+        segs = (WildcardSegment(),)
+        result = self._strategy().traverse(root_value, segs, label, traversal_error_policy=TraversalErrorPolicy.RAISE)  # type: ignore[arg-type]
+        assert isinstance(result, MlodyVectorValue)
+        assert len(result.elements) == 3
+
+    def test_mapped_traversal_flattens_field_over_wildcard(self) -> None:
+        """Scenario: FieldSegment mapped over vector produces flat vector."""
+        from mlody.core.traversal_grammar import FieldSegment, WildcardSegment
+        from mlody.resolver.label_value import MlodyVectorValue, TraversalErrorPolicy
+
+        label = _make_label()
+        loss_child1 = _make_field("loss", "l1")
+        loss_child2 = _make_field("loss", "l2")
+        child1 = _make_field("child1", "c1", child_fields=[loss_child1])
+        child2 = _make_field("child2", "c2", child_fields=[loss_child2])
+        root_value = _make_value_struct_with_fields("root", [child1, child2])
+
+        segs = (WildcardSegment(), FieldSegment("loss"))
+        result = self._strategy().traverse(root_value, segs, label, traversal_error_policy=TraversalErrorPolicy.RAISE)  # type: ignore[arg-type]
+        assert isinstance(result, MlodyVectorValue)
+        assert len(result.elements) == 2  # one loss per child — flat
+
+    def test_mapped_traversal_skip_drops_missing_fields(self) -> None:
+        """Scenario: FieldSegment mapped over vector with SKIP omits missing fields."""
+        from mlody.core.traversal_grammar import FieldSegment, WildcardSegment
+        from mlody.resolver.label_value import MlodyVectorValue, TraversalErrorPolicy
+
+        label = _make_label()
+        loss_c1 = _make_field("optional_field", "l1")
+        loss_c2 = _make_field("optional_field", "l2")
+        child1 = _make_field("child1", "c1", child_fields=[loss_c1])
+        child2 = _make_field("child2", "c2", child_fields=[loss_c2])
+        child3 = _make_field("child3", "c3", child_fields=[])  # no optional_field
+        root_value = _make_value_struct_with_fields("root", [child1, child2, child3])
+
+        segs = (WildcardSegment(), FieldSegment("optional_field"))
+        result = self._strategy().traverse(root_value, segs, label, traversal_error_policy=TraversalErrorPolicy.SKIP)  # type: ignore[arg-type]
+        assert isinstance(result, MlodyVectorValue)
+        assert len(result.elements) == 2  # child3's missing field is dropped
+
+    def test_two_consecutive_wildcards_produce_vector_of_vectors(self) -> None:
+        """Scenario: Two consecutive WildcardSegments produce vector of vectors."""
+        from mlody.core.traversal_grammar import WildcardSegment
+        from mlody.resolver.label_value import MlodyVectorValue, TraversalErrorPolicy
+
+        label = _make_label()
+        sub1 = _make_field("s1", "s1")
+        sub2 = _make_field("s2", "s2")
+        sub3 = _make_field("s3", "s3")
+        sub4 = _make_field("s4", "s4")
+        child1 = _make_field("child1", "c1", child_fields=[sub1, sub2])
+        child2 = _make_field("child2", "c2", child_fields=[sub3, sub4])
+        root_value = _make_value_struct_with_fields("root", [child1, child2])
+
+        segs = (WildcardSegment(), WildcardSegment())
+        result = self._strategy().traverse(root_value, segs, label, traversal_error_policy=TraversalErrorPolicy.RAISE)  # type: ignore[arg-type]
+        assert isinstance(result, MlodyVectorValue)
+        assert len(result.elements) == 2  # not flattened to 4
+        for elem in result.elements:
+            assert isinstance(elem, MlodyVectorValue)
+            assert len(elem.elements) == 2
+
+    def test_mixed_path_with_index_routes_to_engine(self) -> None:
+        """Scenario: Mixed path with IndexSegment routes to traversal engine."""
+        from mlody.core.traversal_grammar import FieldSegment, IndexSegment
+        from mlody.resolver.label_value import MlodyVectorValue, TraversalErrorPolicy
+
+        label = _make_label()
+        # Build a vector then access index 0 then field "loss"
+        # We'll test via parse_traversal_expression to use typed segments
+        loss_field = _make_field("loss", "loss")
+        child = _make_value_struct_with_fields("child", [loss_field])
+
+        from mlody.resolver.label_value import MlodyVectorValue as MVV
+
+        vec = MVV(elements=(MlodyValueValue(struct=child),))
+
+        segs = (IndexSegment(0), FieldSegment("loss"))
+        result = self._strategy().traverse(vec, segs, label, traversal_error_policy=TraversalErrorPolicy.RAISE)  # type: ignore[arg-type]
+        assert isinstance(result, MlodyValueValue)
+
+    def test_deferred_seam_comment_exists(self) -> None:
+        """Task 4.5: D-6 seam comment is present in the source."""
+        import inspect
+
+        from mlody.resolver import label_value as lv
+
+        src = inspect.getsource(lv)
+        assert "TODO(mlody-label-traversal): uniform-level-traversal" in src
+
+
+# ---------------------------------------------------------------------------
+# Group 5 — Resolver API and show command wiring
+# Tasks 5.1–5.4
+# ---------------------------------------------------------------------------
+
+
+class TestResolverAPIExtension:
+    """Requirement: resolve_label_to_value gains traversal_error_policy parameter (task 5.1)."""
+
+    def test_default_raise_policy_is_backward_compatible(self, fs: object) -> None:
+        """Scenario: Default RAISE policy is backward-compatible."""
+        from pyfakefs.fake_filesystem import FakeFilesystem
+
+        assert isinstance(fs, FakeFilesystem)
+        ws = _make_workspace(fs, extra_files={"teams/myroot/pkg/foo.mlody": TASK_MLODY})  # type: ignore[arg-type]
+
+        label = parse_label("@myroot//pkg/foo:my_task")
+        result = resolve_label_to_value(label, ws)
+        assert isinstance(result, MlodyTaskValue)
+
+    def test_mlody_vector_value_importable_from_mlody_resolver(self) -> None:
+        """Scenario: MlodyVectorValue is re-exported from mlody.resolver."""
+        from mlody.resolver import MlodyVectorValue  # noqa: F401
+
+        assert MlodyVectorValue is not None
+
+    def test_traversal_error_policy_importable_from_mlody_resolver(self) -> None:
+        """Scenario: traversal_error_policy is importable from mlody.resolver."""
+        from mlody.resolver import TraversalErrorPolicy  # noqa: F401
+
+        assert TraversalErrorPolicy is not None
+
+    def test_wildcard_traversal_returns_vector_value(self) -> None:
+        """Scenario: Wildcard traversal returns MlodyVectorValue with correct element count."""
+        from mlody.core.traversal_grammar import WildcardSegment
+        from mlody.resolver.label_value import MlodyVectorValue, TraversalErrorPolicy
+
+        label = _make_label()
+        fa = _make_field("fa", "a")
+        fb = _make_field("fb", "b")
+        fc = _make_field("fc", "c")
+        root_value = _make_value_struct_with_fields("root", [fa, fb, fc])
+
+        from mlody.resolver.label_value import ValueTraversalStrategy
+
+        strategy = ValueTraversalStrategy()
+        segs = (WildcardSegment(),)
+        result = strategy.traverse(root_value, segs, label, traversal_error_policy=TraversalErrorPolicy.RAISE)  # type: ignore[arg-type]
+        assert isinstance(result, MlodyVectorValue)
+        assert len(result.elements) == 3
+
+    def test_skip_policy_drops_missing_fields_in_wildcard_traversal(self) -> None:
+        """Scenario: SKIP policy silently drops missing fields in wildcard + field traversal."""
+        from mlody.core.traversal_grammar import FieldSegment, WildcardSegment
+        from mlody.resolver.label_value import MlodyVectorValue, TraversalErrorPolicy, ValueTraversalStrategy
+
+        label = _make_label()
+        loss_c1 = _make_field("metric", "m1")
+        loss_c2 = _make_field("metric", "m2")
+        child1 = _make_field("child1", "c1", child_fields=[loss_c1])
+        child2 = _make_field("child2", "c2", child_fields=[loss_c2])
+        child3 = _make_field("child3", "c3", child_fields=[])  # no metric field
+        root_value = _make_value_struct_with_fields("root", [child1, child2, child3])
+
+        segs = (WildcardSegment(), FieldSegment("metric"))
+        result = ValueTraversalStrategy().traverse(root_value, segs, label, traversal_error_policy=TraversalErrorPolicy.SKIP)  # type: ignore[arg-type]
+        assert isinstance(result, MlodyVectorValue)
+        assert len(result.elements) == 2

@@ -34,6 +34,7 @@ from mlody.resolver import (
     MlodyUnresolvedValue,
     MlodyValue,
     MlodyValueValue,
+    MlodyVectorValue,
     MlodyWorkspaceValue,
     resolve_label_to_value,
     resolve_workspace,
@@ -199,6 +200,12 @@ def _pretty_struct_str(obj: object, _depth: int = 0) -> str:
 
 def _print_mlody_value(value: MlodyValue) -> None:
     """Print a MlodyValue to the console with syntax highlighting."""
+    if isinstance(value, MlodyVectorValue):
+        # Render each element in the vector using the existing per-kind dispatchers.
+        # Elements are printed sequentially; an empty vector produces no output.
+        for elem in value.elements:
+            _print_mlody_value(elem)
+        return
     if isinstance(value, MlodyValueValue):
         _console.print("value:")
         _console.print(Syntax(_pretty_struct_str(value.struct), "python", theme="monokai", word_wrap=True))
@@ -221,6 +228,10 @@ def _render_mlody_value(value: MlodyValue) -> str:
     implementation-time detail (design Q-01): using str()/pretty_repr()
     for now to produce sensible output for all types.
     """
+    if isinstance(value, MlodyVectorValue):
+        # Render each element separated by newlines; empty vector → empty string.
+        parts = [_render_mlody_value(elem) for elem in value.elements]
+        return "\n".join(parts)
     if isinstance(value, MlodyWorkspaceValue):
         name = value.name or "(cwd)"
         return f"workspace: {name}\nroot: {value.root}"

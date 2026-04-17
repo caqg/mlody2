@@ -134,8 +134,12 @@ def parse_label(label: str) -> tuple[str | None, str]:
         parts.append(f":{lbl.entity.name}")
         if lbl.entity.field_path:
             parts.append("." + ".".join(lbl.entity.field_path))
+        if lbl.entity_query is not None:
+            parts.append(f"[{lbl.entity_query}]")
     if lbl.attribute_path:
         parts.append("'" + ".".join(lbl.attribute_path))
+        if lbl.attribute_query is not None:
+            parts.append(f"[{lbl.attribute_query}]")
     inner_label = "".join(parts)
     return (committoid, inner_label)
 

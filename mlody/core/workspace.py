@@ -456,10 +456,16 @@ class Workspace:
                             # new workspace → resolver dependency direction.
                             from mlody.resolver.label_value import (  # noqa: PLC0415
                                 MlodyUnresolvedValue as _MlodyUnresolvedValue,
+                                TraversalErrorPolicy as _TraversalErrorPolicy,
+                                _RawAttrValue as _RawAttrValue_t,
                                 _traverse_one_step as _ts,
                             )
                             from mlody.core.label import (  # noqa: PLC0415
                                 parse_label as _core_parse_label,
+                            )
+                            from mlody.core.traversal_parser import (  # noqa: PLC0415
+                                TraversalParseError as _TraversalParseError,
+                                parse_traversal_expression as _parse_traversal,
                             )
 
                             lbl_str = target if isinstance(target, str) else str(target)
@@ -479,14 +485,68 @@ class Workspace:
                                 if isinstance(step_result, tuple):
                                     current = step_result[0]
                                 else:
-                                    # Non-Struct fallback: return the raw value directly
-                                    # (consistent with pre-existing workspace.resolve() behaviour
-                                    # which returned fallback values unwrapped).
-                                    return getattr(step_result, "value", step_result)
+                                    # Non-Struct fallback: accumulate and break so that
+                                    # entity_query can still be applied below.
+                                    current = step_result
+                                    break
+
+                            # Apply entity_query (e.g. [1], ["key"], [*]) if present.
+                            # The label parser strips brackets and stores the inner
+                            # content, so we reconstruct "[query]" for the parser.
+                            eq = lbl_obj.entity_query
+                            if eq is not None:
+                                try:
+                                    expr = _parse_traversal(f"[{eq}]")
+                                except _TraversalParseError:
+                                    expr = None
+                                if expr is not None and expr.segments:
+                                    seg = expr.segments[0]
+                                    q_result = _ts(
+                                        current,
+                                        seg,
+                                        field_parts,
+                                        lbl_obj,
+                                        _TraversalErrorPolicy.RAISE,
+                                    )
+                                    if isinstance(q_result, _MlodyUnresolvedValue):
+                                        return q_result
+                                    if isinstance(q_result, tuple):
+                                        current = q_result[0]
+                                    else:
+                                        return getattr(q_result, "value", q_result)
+
+                            # Unwrap _RawAttrValue for callers that expect plain values.
+                            if isinstance(current, _RawAttrValue_t):
+                                return current.value
                             return current
 
                         for field in field_parts:
                             obj = _step(obj, field)
+
+                        # Apply entity_query (e.g. [1], ["key"]) if present.
+                        eq = lbl.entity_query
+                        if eq is not None:
+                            from mlody.core.traversal_parser import (  # noqa: PLC0415
+                                TraversalParseError as _TraversalParseError2,
+                                parse_traversal_expression as _parse_traversal2,
+                            )
+                            try:
+                                expr2 = _parse_traversal2(f"[{eq}]")
+                            except _TraversalParseError2:
+                                expr2 = None
+                            if expr2 is not None and expr2.segments:
+                                from mlody.core.traversal_grammar import (  # noqa: PLC0415
+                                    IndexSegment as _IndexSegment,
+                                    KeySegment as _KeySegment,
+                                    WildcardSegment as _WildcardSegment,
+                                )
+                                seg2 = expr2.segments[0]
+                                if isinstance(seg2, _IndexSegment) and isinstance(obj, (list, tuple)):
+                                    obj = obj[seg2.index]
+                                elif isinstance(seg2, _KeySegment) and isinstance(obj, dict):
+                                    obj = obj[seg2.key]
+                                elif isinstance(seg2, _WildcardSegment) and isinstance(obj, (list, tuple, dict)):
+                                    obj = list(obj.values()) if isinstance(obj, dict) else list(obj)
                         return obj
 
                     if can_registry_resolve and entity.root is not None:

@@ -24,10 +24,11 @@ See also: design.md §D-3, §D-6.
 
 from __future__ import annotations
 
+import enum
 import json
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, Sequence, Union
 
 if TYPE_CHECKING:
     from mlody.core.label.label import Label
@@ -112,6 +113,31 @@ class MlodyUnresolvedValue(MlodyValue):
     reason: str
 
 
+@dataclass(frozen=True)
+class MlodyVectorValue(MlodyValue):
+    """A collection of ``MlodyValue`` elements produced by wildcard or recursive-descent traversal.
+
+    ``elements`` is a tuple of ``MlodyValue`` instances in deterministic order
+    (declaration order for wildcards, depth-first for recursive descent).
+    """
+
+    elements: tuple[MlodyValue, ...]
+
+
+class TraversalErrorPolicy(enum.Enum):
+    """Per-call-site error policy for traversal engine steps.
+
+    ``SKIP``: when a step cannot proceed (missing field, out-of-bounds index,
+    type mismatch), produce no output for that branch and continue silently.
+
+    ``RAISE``: return ``MlodyUnresolvedValue`` immediately on the first
+    unresolvable step (consistent with existing behaviour; this is the default).
+    """
+
+    SKIP = "skip"
+    RAISE = "raise"
+
+
 # ---------------------------------------------------------------------------
 # Traversal strategy protocol  (task 2.1)
 # ---------------------------------------------------------------------------
@@ -123,13 +149,19 @@ class TraversalStrategy(Protocol):
     v1 ships ``StructTraversalStrategy`` for task and action.
     Future callable-based strategies (e.g. lazy workspace-info computation)
     implement this protocol without touching ``resolve_label_to_value``.
+
+    The optional ``traversal_error_policy`` keyword argument (design D-4)
+    defaults to ``RAISE`` for backward compatibility with existing implementations
+    that do not declare it.
     """
 
     def traverse(
         self,
         value: object,
-        path: tuple[str, ...],
+        path: tuple[str, ...] | tuple[object, ...],
         label: "Label",
+        *,
+        traversal_error_policy: TraversalErrorPolicy = TraversalErrorPolicy.RAISE,
     ) -> MlodyValue: ...
 
 
@@ -174,6 +206,7 @@ class StructTraversalStrategy:
         value: object,
         path: tuple[str, ...],
         label: "Label",
+        **kwargs: object,  # Accepts traversal_error_policy for protocol compatibility (D-4)
     ) -> MlodyValue:
         if not path:
             return _wrap_struct(self._kind, value)
@@ -344,6 +377,390 @@ def _traverse_json_backed_value(
     return _RawAttrValue(value=current, label=label)
 
 
+# ---------------------------------------------------------------------------
+# Traversal engine helpers  (tasks 3.3 – 3.7)
+# ---------------------------------------------------------------------------
+#
+# Each helper accepts the _current_ MlodyValue, the typed PathSegment, the
+# error policy, and the originating label.  They never raise; all failures
+# produce MlodyUnresolvedValue (RAISE) or MlodyVectorValue(elements=()) (SKIP).
+
+
+def _policy_miss(
+    policy: TraversalErrorPolicy,
+    label: "Label",
+    reason: str,
+) -> MlodyValue:
+    """Shared helper: convert a "miss" into the policy-appropriate MlodyValue."""
+    if policy is TraversalErrorPolicy.SKIP:
+        return MlodyVectorValue(elements=())
+    return MlodyUnresolvedValue(label=label, reason=reason)
+
+
+def _wrap_raw(obj: object, label: "Label") -> MlodyValue:
+    """Wrap a raw Python value produced by engine traversal."""
+    if isinstance(obj, MlodyValue):
+        return obj
+    return _RawAttrValue(value=obj, label=label)
+
+
+def _is_record_struct(value: object) -> bool:
+    """Return True when *value* is a Starlark Struct with a record type."""
+    from starlarkish.core.struct import Struct as _Struct  # noqa: PLC0415
+
+    if not isinstance(value, _Struct):
+        return False
+    value_type = getattr(value, "type", None)
+    return (
+        getattr(value_type, "kind", None) == "record"
+        or getattr(value_type, "_root_kind", None) == "record"
+    )
+
+
+def _engine_index_step(
+    current: MlodyValue,
+    segment: object,
+    policy: TraversalErrorPolicy,
+    label: "Label",
+) -> MlodyValue:
+    """Apply an IndexSegment to *current*.
+
+    Supported inputs:
+    - ``MlodyVectorValue``: index into ``elements`` tuple.
+
+    Out-of-bounds and type mismatches follow the RAISE/SKIP policy.
+    """
+    from mlody.core.traversal_grammar import IndexSegment  # noqa: PLC0415
+
+    assert isinstance(segment, IndexSegment)
+    idx = segment.index
+
+    if isinstance(current, MlodyVectorValue):
+        elems = current.elements
+        try:
+            return elems[idx]
+        except IndexError:
+            return _policy_miss(
+                policy,
+                label,
+                (
+                    f"index {idx} is out of range for vector of length {len(elems)} "
+                    f"(label: {label!r})"
+                ),
+            )
+
+    if isinstance(current, _RawAttrValue) and isinstance(current.value, (list, tuple)):
+        seq = current.value
+        try:
+            return _RawAttrValue(value=seq[idx], label=label)
+        except IndexError:
+            return _policy_miss(
+                policy,
+                label,
+                (
+                    f"index {idx} is out of range for sequence of length {len(seq)} "
+                    f"(label: {label!r})"
+                ),
+            )
+
+    if isinstance(current, MlodyValueValue) and isinstance(current.struct, (list, tuple)):
+        seq = current.struct
+        try:
+            return MlodyValueValue(struct=seq[idx])
+        except IndexError:
+            return _policy_miss(
+                policy,
+                label,
+                (
+                    f"index {idx} is out of range for sequence of length {len(seq)} "
+                    f"(label: {label!r})"
+                ),
+            )
+
+    return _policy_miss(
+        policy,
+        label,
+        (
+            f"IndexSegment requires a vector value but got "
+            f"{type(current).__name__} (label: {label!r})"
+        ),
+    )
+
+
+def _engine_key_step(
+    current: MlodyValue,
+    segment: object,
+    policy: TraversalErrorPolicy,
+    label: "Label",
+) -> MlodyValue:
+    """Apply a KeySegment to *current*.
+
+    Supported inputs:
+    - ``_RawAttrValue`` whose ``value`` is a Python ``dict``.
+
+    Missing keys and type mismatches follow the RAISE/SKIP policy.
+    """
+    from mlody.core.traversal_grammar import KeySegment  # noqa: PLC0415
+
+    assert isinstance(segment, KeySegment)
+    key = segment.key
+
+    d: object = None
+    if isinstance(current, _RawAttrValue) and isinstance(current.value, dict):
+        d = current.value
+    elif isinstance(current, MlodyValue):
+        # Check if the wrapped struct has a dict-like value somewhere
+        pass
+
+    if isinstance(d, dict):
+        if key in d:
+            return _wrap_raw(d[key], label)
+        return _policy_miss(
+            policy,
+            label,
+            f"key {key!r} not found in dict (label: {label!r})",
+        )
+
+    return _policy_miss(
+        policy,
+        label,
+        (
+            f"KeySegment requires a dict-backed value but got "
+            f"{type(current).__name__} (label: {label!r})"
+        ),
+    )
+
+
+def _engine_slice_step(
+    current: MlodyValue,
+    segment: object,
+    policy: TraversalErrorPolicy,
+    label: "Label",
+) -> MlodyValue:
+    """Apply a SliceSegment to *current*.
+
+    Supported inputs:
+    - ``MlodyVectorValue``: slice the ``elements`` tuple → new ``MlodyVectorValue``.
+    - ``_RawAttrValue`` whose ``value`` is a Python list or tuple → ``MlodyVectorValue``.
+    - ``MlodyValueValue`` whose ``struct`` is a Python list or tuple → ``MlodyVectorValue``.
+
+    Type mismatches follow the RAISE/SKIP policy.
+    """
+    from mlody.core.traversal_grammar import SliceSegment  # noqa: PLC0415
+
+    assert isinstance(segment, SliceSegment)
+    sl = slice(segment.start, segment.stop, segment.step)
+
+    if isinstance(current, MlodyVectorValue):
+        sliced = current.elements[sl]
+        return MlodyVectorValue(elements=tuple(sliced))
+
+    if isinstance(current, _RawAttrValue) and isinstance(current.value, (list, tuple)):
+        sliced_raw = current.value[sl]
+        return MlodyVectorValue(elements=tuple(_wrap_raw(v, label) for v in sliced_raw))
+
+    if isinstance(current, MlodyValueValue) and isinstance(current.struct, (list, tuple)):
+        sliced_struct = current.struct[sl]
+        return MlodyVectorValue(elements=tuple(MlodyValueValue(struct=v) for v in sliced_struct))
+
+    return _policy_miss(
+        policy,
+        label,
+        (
+            f"SliceSegment requires a vector or sequence value but got "
+            f"{type(current).__name__} (label: {label!r})"
+        ),
+    )
+
+
+def _collect_record_fields(
+    value: object,
+    label: "Label",
+) -> list[MlodyValue]:
+    """Collect all immediate children of a record-typed Struct.
+
+    Uses ``_traverse_one_step`` so that each child gets a composed location.
+    Returns an empty list for non-record or empty structs.
+    """
+    from starlarkish.core.struct import Struct as _Struct  # noqa: PLC0415
+
+    if not isinstance(value, _Struct):
+        return []
+    value_type = getattr(value, "type", None)
+    is_record = (
+        getattr(value_type, "kind", None) == "record"
+        or getattr(value_type, "_root_kind", None) == "record"
+    )
+    if not is_record:
+        return []
+
+    _direct_fields = getattr(value_type, "fields", None)
+    _attrs_dict = getattr(value_type, "attributes", None)
+    _attrs_fields = _attrs_dict.get("fields") if isinstance(_attrs_dict, dict) else None
+    fields_list: list[object] = list(_direct_fields or _attrs_fields or [])
+
+    children: list[MlodyValue] = []
+    for f in fields_list:
+        fname = getattr(f, "name", None)
+        if not isinstance(fname, str):
+            continue
+        result = _traverse_one_step(value, fname, (), label, TraversalErrorPolicy.RAISE)
+        if isinstance(result, MlodyUnresolvedValue):
+            continue
+        if isinstance(result, tuple):
+            rebuilt, _ = result
+            children.append(MlodyValueValue(struct=rebuilt))
+        elif isinstance(result, MlodyValue):
+            children.append(result)
+    return children
+
+
+def _engine_wildcard_step(
+    current: MlodyValue,
+    segment: object,
+    policy: TraversalErrorPolicy,
+    label: "Label",
+) -> MlodyValue:
+    """Apply a WildcardSegment to *current*.
+
+    Supported inputs (priority order):
+    1. ``MlodyVectorValue`` → return all elements.
+    2. ``_RawAttrValue`` whose ``value`` is a Python ``dict`` → return dict values.
+    3. Record-typed Starlark Struct → return all declared fields via
+       ``_traverse_one_step``.
+
+    Non-traversable roots follow the RAISE/SKIP policy.
+    """
+    # Case 1: vector
+    if isinstance(current, MlodyVectorValue):
+        return MlodyVectorValue(elements=current.elements)
+
+    # Case 2: dict-backed
+    if isinstance(current, _RawAttrValue) and isinstance(current.value, dict):
+        children: list[MlodyValue] = [_wrap_raw(v, label) for v in current.value.values()]
+        return MlodyVectorValue(elements=tuple(children))
+
+    # Case 3: record-typed Struct
+    from starlarkish.core.struct import Struct as _Struct  # noqa: PLC0415
+
+    if isinstance(current, (MlodyValueValue, MlodyTaskValue, MlodyActionValue)):
+        struct_obj = current.struct  # type: ignore[union-attr]
+        if isinstance(struct_obj, _Struct) and _is_record_struct(struct_obj):
+            field_values = _collect_record_fields(struct_obj, label)
+            return MlodyVectorValue(elements=tuple(field_values))
+
+    # Also try the raw struct when current is MlodyValueValue and struct is a Struct
+    if isinstance(current, MlodyValueValue):
+        struct_obj = current.struct
+        if isinstance(struct_obj, _Struct) and _is_record_struct(struct_obj):
+            field_values = _collect_record_fields(struct_obj, label)
+            return MlodyVectorValue(elements=tuple(field_values))
+
+    # Fallback: check if current itself is a Struct that is record-typed
+    # (handles case where the Struct is passed directly, not wrapped)
+    if isinstance(current, _Struct) and _is_record_struct(current):  # type: ignore[arg-type]
+        field_values = _collect_record_fields(current, label)
+        return MlodyVectorValue(elements=tuple(field_values))
+
+    return _policy_miss(
+        policy,
+        label,
+        (
+            f"WildcardSegment cannot traverse {type(current).__name__}; "
+            "expected a vector, dict-backed value, or record-typed Struct "
+            f"(label: {label!r})"
+        ),
+    )
+
+
+def _engine_recursive_descent_step(
+    current: MlodyValue,
+    segment: object,
+    policy: TraversalErrorPolicy,
+    label: "Label",
+) -> MlodyValue:
+    """Apply a RecursiveDescentSegment to *current*.
+
+    Collects all descendants at any depth using depth-first traversal.
+    The current value itself is NOT included.  Recurses into:
+    - ``MlodyVectorValue`` elements
+    - ``_RawAttrValue`` wrapping a Python ``dict`` (values)
+    - Record-typed Starlark Structs (all declared fields)
+
+    Does not recurse into scalar leaves (non-Struct, non-dict, non-list).
+    Non-traversable roots follow the RAISE/SKIP policy.
+    """
+    collected: list[MlodyValue] = []
+    _visited: set[int] = set()
+
+    def _collect_children(node: object) -> list[MlodyValue]:
+        """Return the immediate MlodyValue children of *node*.
+
+        Accepts both typed ``MlodyValue`` wrappers and raw Starlark Structs so
+        the engine can be called directly with an unwrapped struct (e.g. from
+        tests or mapped-traversal intermediates) without extra wrapping.
+        """
+        from starlarkish.core.struct import Struct as _Struct  # noqa: PLC0415
+
+        if isinstance(node, MlodyVectorValue):
+            return list(node.elements)
+
+        if isinstance(node, _RawAttrValue) and isinstance(node.value, dict):
+            return [_wrap_raw(v, label) for v in node.value.values()]
+
+        if isinstance(node, (MlodyValueValue, MlodyTaskValue, MlodyActionValue)):
+            struct_obj = node.struct  # type: ignore[union-attr]
+            if isinstance(struct_obj, _Struct) and _is_record_struct(struct_obj):
+                return _collect_record_fields(struct_obj, label)
+
+        # Raw Struct with record type — reached for the initial root or for fields
+        # produced by _collect_record_fields whose traversal rebuilt a raw Struct.
+        if isinstance(node, _Struct) and _is_record_struct(node):  # type: ignore[arg-type]
+            return _collect_record_fields(node, label)  # type: ignore[arg-type]
+
+        return []
+
+    def _dfs(node: object) -> None:
+        node_id = id(node)
+        if node_id in _visited:
+            return
+        _visited.add(node_id)
+        children = _collect_children(node)
+        for child in children:
+            collected.append(child)
+            _dfs(child)
+
+    # Check that the root is traversable (not a scalar/unresolvable leaf)
+    from starlarkish.core.struct import Struct as _Struct  # noqa: PLC0415
+
+    root_is_traversable = (
+        isinstance(current, MlodyVectorValue)
+        or (isinstance(current, _RawAttrValue) and isinstance(current.value, dict))
+        or (
+            isinstance(current, (MlodyValueValue, MlodyTaskValue, MlodyActionValue))
+            and isinstance(getattr(current, "struct", None), _Struct)
+            and _is_record_struct(getattr(current, "struct", None))
+        )
+        # Raw Struct with record type — reached when the engine is called directly
+        # with an unwrapped struct (e.g. from tests or mapped-traversal intermediate).
+        or (isinstance(current, _Struct) and _is_record_struct(current))  # type: ignore[arg-type]
+    )
+
+    if not root_is_traversable:
+        return _policy_miss(
+            policy,
+            label,
+            (
+                f"RecursiveDescentSegment cannot traverse {type(current).__name__}; "
+                "expected a vector, dict-backed value, or record-typed Struct "
+                f"(label: {label!r})"
+            ),
+        )
+
+    _dfs(current)
+    return MlodyVectorValue(elements=tuple(collected))
+
+
 # A sentinel label used only in error messages from _wrap_struct above.
 # It is never returned to callers because _wrap_struct is called only when
 # kind is in the dispatch table (which provides typed wrappers).
@@ -372,39 +789,101 @@ _SENTINEL_LABEL: "Label" = _SentinelLabel()  # type: ignore[assignment]
 
 def _traverse_one_step(
     current_struct: object,
-    field_name: str,
-    path_so_far: tuple[str, ...],
+    field_name: object,  # str | PathSegment
+    path_so_far: tuple[object, ...],
     label: "Label",
-) -> tuple[object, bool] | MlodyUnresolvedValue:
+    policy: TraversalErrorPolicy = TraversalErrorPolicy.RAISE,
+) -> tuple[object, bool] | MlodyValue:
     """Perform one step of record-aware field traversal on a Starlark Struct.
 
-    Encapsulates: fields-list lookup (direct then ``attributes`` dict),
-    direct-type-attribute fallback, ``compose_location()`` call, and Struct
-    rebuild via ``as_mapping()`` with the composed location substituted.
+    Accepts either a plain ``str`` or a typed ``PathSegment`` (design R-1
+    backward-compatibility guarantee).  A bare ``str`` is wrapped in
+    ``FieldSegment`` internally.
+
+    When the segment is a ``FieldSegment`` (or a plain ``str``), applies
+    record-aware field lookup and ``compose_location()`` and returns a
+    ``(rebuilt_struct, False)`` tuple on success.
+
+    For other ``PathSegment`` kinds (``IndexSegment``, ``KeySegment``,
+    ``WildcardSegment``, ``RecursiveDescentSegment``), delegates to the
+    corresponding engine helper and returns a ``MlodyValue`` directly.
 
     Args:
-        current_struct: The Starlark Struct for the current traversal level.
-        field_name: The single path segment being resolved at this step.
+        current_struct: The current value at this traversal level.
+        field_name: Path segment — ``str`` (legacy) or ``PathSegment`` (typed).
         path_so_far: Segments already consumed, used only in error messages.
         label: The originating Label, used only in error messages.
+        policy: Error policy for non-field dispatch (RAISE or SKIP).
 
     Returns:
-        ``(rebuilt_struct, False)`` on success, or ``MlodyUnresolvedValue``
-        on any failure (missing field, ``LocationComposeError``, or non-Struct
-        field_obj which is returned as ``_RawAttrValue``).
+        ``(rebuilt_struct, False)`` for FieldSegment/str on a Struct, or a
+        ``MlodyValue`` for other segment kinds or any failure.
     """
+    from mlody.core.traversal_grammar import (  # noqa: PLC0415
+        FieldSegment,
+        IndexSegment,
+        KeySegment,
+        PathSegment,
+        RecursiveDescentSegment,
+        SliceSegment,
+        WildcardSegment,
+    )
     from mlody.core.location_composition import (  # noqa: PLC0415
         LocationComposeError,
         compose_location,
     )
     from starlarkish.core.struct import Struct as _Struct  # noqa: PLC0415
 
+    # Normalise: wrap plain str in FieldSegment for unified dispatch.
+    if isinstance(field_name, str):
+        segment: PathSegment = FieldSegment(name=field_name)
+        effective_name: str = field_name
+    elif isinstance(field_name, FieldSegment):
+        segment = field_name
+        effective_name = field_name.name
+    elif isinstance(field_name, IndexSegment):
+        # Delegate to engine helper — current_struct must be a MlodyValue
+        if isinstance(current_struct, MlodyValue):
+            return _engine_index_step(current_struct, field_name, policy, label)
+        return _engine_index_step(MlodyValueValue(struct=current_struct), field_name, policy, label)
+    elif isinstance(field_name, KeySegment):
+        if isinstance(current_struct, MlodyValue):
+            return _engine_key_step(current_struct, field_name, policy, label)
+        return _engine_key_step(_RawAttrValue(value=current_struct, label=label), field_name, policy, label)
+    elif isinstance(field_name, WildcardSegment):
+        # Wildcard: expand current struct as a record-typed Struct value
+        if isinstance(current_struct, MlodyValue):
+            return _engine_wildcard_step(current_struct, field_name, policy, label)
+        # Wrap as MlodyValueValue so engine handles it
+        return _engine_wildcard_step(MlodyValueValue(struct=current_struct), field_name, policy, label)
+    elif isinstance(field_name, RecursiveDescentSegment):
+        if isinstance(current_struct, MlodyValue):
+            return _engine_recursive_descent_step(current_struct, field_name, policy, label)
+        return _engine_recursive_descent_step(MlodyValueValue(struct=current_struct), field_name, policy, label)
+    elif isinstance(field_name, SliceSegment):
+        if isinstance(current_struct, MlodyValue):
+            return _engine_slice_step(current_struct, field_name, policy, label)
+        return _engine_slice_step(MlodyValueValue(struct=current_struct), field_name, policy, label)
+    else:
+        return MlodyUnresolvedValue(
+            label=label,
+            reason=f"unknown path segment type {type(field_name).__name__!r}",
+        )
+
+    # FieldSegment / str path: record-aware field lookup.
+    # If current_struct is a typed MlodyValue wrapper (MlodyValueValue, MlodyTaskValue,
+    # or MlodyActionValue), unwrap to the inner Struct so that field lookup finds the
+    # record type.  This is required for mapped traversal (task 4.3): after a wildcard
+    # expands elements into MlodyValueValue instances, subsequent FieldSegment steps
+    # must operate on the underlying Starlark Struct, not the Python wrapper.
+    if isinstance(current_struct, (MlodyValueValue, MlodyTaskValue, MlodyActionValue)):
+        current_struct = current_struct.struct  # type: ignore[union-attr]
     value_type = getattr(current_struct, "type", None)
     _SENTINEL = object()
 
     # Field lookup order:
     # 1. Search type.fields for a matching entry by name.
-    # 2. Fall back to getattr(value.type, field_name).
+    # 2. Fall back to getattr(value.type, effective_name).
     # 3. If both miss, return MlodyUnresolvedValue.
     _direct_fields = getattr(value_type, "fields", None)
     _attrs_dict = getattr(value_type, "attributes", None)
@@ -413,18 +892,18 @@ def _traverse_one_step(
 
     field_obj: object = _SENTINEL
     for f in fields_list:
-        if getattr(f, "name", None) == field_name:
+        if getattr(f, "name", None) == effective_name:
             field_obj = f
             break
 
     if field_obj is _SENTINEL:
-        fallback = getattr(value_type, field_name, _SENTINEL)
+        fallback = getattr(value_type, effective_name, _SENTINEL)
         if fallback is _SENTINEL:
             available = [str(getattr(f, "name", "?")) for f in fields_list]
             return MlodyUnresolvedValue(
                 label=label,
                 reason=(
-                    f"field {field_name!r} not found on record type "
+                    f"field {effective_name!r} not found on record type "
                     f"{getattr(value_type, 'name', '?')!r}; "
                     f"available fields: {available}"
                 ),
@@ -438,7 +917,7 @@ def _traverse_one_step(
         composed_loc = compose_location(
             parent_loc=parent_loc,  # type: ignore[arg-type]
             field_loc=field_loc,  # type: ignore[arg-type]
-            field_name=field_name,
+            field_name=effective_name,
         )
     except LocationComposeError as exc:
         return MlodyUnresolvedValue(label=label, reason=str(exc))
@@ -470,19 +949,48 @@ class ValueTraversalStrategy:
     For an empty path, wraps the struct as ``MlodyValueValue``.
     For non-record root values, falls back to generic ``getattr`` traversal
     (the OQ-13 extension seam).
+
+    The optional ``traversal_error_policy`` keyword argument (design D-4)
+    controls SKIP/RAISE behaviour for non-field segment types.
     """
 
     def traverse(
         self,
         value: object,
-        path: tuple[str, ...],
+        path: tuple[object, ...],
         label: "Label",
+        *,
+        traversal_error_policy: TraversalErrorPolicy = TraversalErrorPolicy.RAISE,
     ) -> MlodyValue:
         from starlarkish.core.struct import Struct  # noqa: PLC0415
         from mlody.core.virtual_value import traverse_virtual_value  # noqa: PLC0415
+        from mlody.core.traversal_grammar import PathSegment, FieldSegment  # noqa: PLC0415
 
         if not path:
             return MlodyValueValue(struct=value)
+
+        # Check whether the path contains any non-FieldSegment / non-str segments.
+        # If it does, we must use the engine-aware loop (tasks 4.1–4.3).
+        def _is_field_only(p: tuple[object, ...]) -> bool:
+            for seg in p:
+                if isinstance(seg, str):
+                    continue
+                if isinstance(seg, FieldSegment):
+                    continue
+                return False
+            return True
+
+        has_engine_segs = not _is_field_only(path)
+
+        if has_engine_segs or isinstance(value, MlodyVectorValue):
+            # Engine-aware loop: handles IndexSegment, KeySegment,
+            # WildcardSegment, RecursiveDescentSegment, and mapped traversal
+            # over vector accumulators (tasks 4.2–4.3).
+            return self._traverse_with_engine(value, path, label, traversal_error_policy)
+
+        # Pure FieldSegment / str path — use the fast record-aware loop.
+        # Cast path to tuple[str, ...] for the existing logic.
+        str_path = tuple(s.name if isinstance(s, FieldSegment) else s for s in path)  # type: ignore[union-attr]
 
         value_type = getattr(value, "type", None)
         location = getattr(value, "location", None)
@@ -494,11 +1002,11 @@ class ValueTraversalStrategy:
             try:
                 child_value = traverse_virtual_value(
                     value,
-                    path,
-                    "'" + ".".join(path),
+                    str_path,
+                    "'" + ".".join(str_path),
                 )
             except (AttributeError, KeyError) as exc:
-                missing = str(exc.args[0]) if exc.args else path[-1]
+                missing = str(exc.args[0]) if exc.args else str_path[-1]
                 return MlodyUnresolvedValue(
                     label=label,
                     reason=(
@@ -513,24 +1021,32 @@ class ValueTraversalStrategy:
             or getattr(value_type, "_root_kind", None) == "record"
         )
 
-        if len(path) == 1 and is_record:
-            result = _traverse_one_step(value, path[0], (), label)
+        if len(str_path) == 1 and is_record:
+            result = _traverse_one_step(value, str_path[0], (), label, traversal_error_policy)
             if isinstance(result, MlodyUnresolvedValue):
+                return result
+            if isinstance(result, MlodyValue):
                 return result
             return MlodyValueValue(struct=result[0])
 
-        if len(path) >= 2 and is_record:
+        if len(str_path) >= 2 and is_record:
             current: object = value
-            for i, segment in enumerate(path):
-                step = _traverse_one_step(current, segment, tuple(path[:i]), label)
+            for i, segment in enumerate(str_path):
+                step = _traverse_one_step(current, segment, tuple(str_path[:i]), label, traversal_error_policy)
                 if isinstance(step, MlodyUnresolvedValue):
                     return step
+                if isinstance(step, MlodyValue):
+                    # Non-tuple return (engine delegated) — use as-is
+                    current = step
+                    if i < len(str_path) - 1 and isinstance(step, MlodyUnresolvedValue):
+                        return step
+                    continue
                 rebuilt, _ = step
                 # After the first step, ``rebuilt`` is a field struct.  For
                 # subsequent steps to use record-aware traversal, the rebuilt
                 # struct must itself be record-typed.  If it is not, the spec
                 # requires MlodyUnresolvedValue naming the non-record intermediate.
-                if i < len(path) - 1:
+                if i < len(str_path) - 1:
                     next_type = getattr(rebuilt, "type", None)
                     next_is_record = (
                         getattr(next_type, "kind", None) == "record"
@@ -539,7 +1055,7 @@ class ValueTraversalStrategy:
                     if not next_is_record:
                         json_result = _traverse_json_backed_value(
                             rebuilt,
-                            tuple(path[i + 1:]),
+                            tuple(str_path[i + 1:]),
                             label,
                         )
                         if json_result is not None:
@@ -553,9 +1069,11 @@ class ValueTraversalStrategy:
                             ),
                         )
                 current = rebuilt
+            if isinstance(current, MlodyValue):
+                return current
             return MlodyValueValue(struct=current)
 
-        json_result = _traverse_json_backed_value(value, path, label)
+        json_result = _traverse_json_backed_value(value, str_path, label)
         if json_result is not None:
             return json_result
 
@@ -564,11 +1082,11 @@ class ValueTraversalStrategy:
         # traversal dispatch framework would replace this fallback with a
         # handler registered in a table analogous to _LOCATION_COMPOSERS.
         obj: object = value
-        for i, segment in enumerate(path):
+        for i, segment in enumerate(str_path):
             try:
                 obj = getattr(obj, segment)
             except AttributeError:
-                traversed = ".".join(path[:i])
+                traversed = ".".join(str_path[:i])
                 parent = f" on '{traversed}'" if traversed else ""
                 return MlodyUnresolvedValue(
                     label=label,
@@ -581,6 +1099,101 @@ class ValueTraversalStrategy:
         if isinstance(terminal_kind, str) and terminal_kind in TRAVERSAL_STRATEGIES:
             return _wrap_struct(terminal_kind, obj)
         return _RawAttrValue(value=obj, label=label)
+
+    def _traverse_with_engine(
+        self,
+        value: object,
+        path: tuple[object, ...],
+        label: "Label",
+        policy: TraversalErrorPolicy,
+    ) -> MlodyValue:
+        """Engine-aware multi-step traversal loop for paths containing non-field segments.
+
+        Implements:
+        - Mapped traversal (task 4.3): when the accumulator is a MlodyVectorValue
+          and the next segment is FieldSegment/IndexSegment/KeySegment, map the step
+          over all elements and collect into a flat MlodyVectorValue.
+        - Vector-of-vectors (task 4.4): when the accumulator is a MlodyVectorValue
+          and the next segment is WildcardSegment/RecursiveDescentSegment, apply
+          the expansion to each element and collect into a MlodyVectorValue whose
+          elements are themselves MlodyVectorValues (not flattened).
+        """
+        from mlody.core.traversal_grammar import (  # noqa: PLC0415
+            FieldSegment,
+            IndexSegment,
+            KeySegment,
+            SliceSegment,
+            WildcardSegment,
+            RecursiveDescentSegment,
+        )
+
+        # Seed the accumulator
+        if isinstance(value, MlodyValue):
+            accumulator: MlodyValue = value
+        else:
+            accumulator = MlodyValueValue(struct=value)
+
+        for seg in path:
+            if isinstance(accumulator, MlodyUnresolvedValue):
+                # Short-circuit on failure
+                return accumulator
+
+            # Mapped traversal applies FieldSegment and KeySegment over each element of
+            # a vector accumulator.  IndexSegment is intentionally excluded: [n] on a
+            # MlodyVectorValue means "index into this vector", which is handled by
+            # _engine_index_step in the else branch, not by element-wise mapping.
+            is_mapping_seg = isinstance(seg, (FieldSegment, KeySegment))
+            is_expansion_seg = isinstance(seg, (WildcardSegment, RecursiveDescentSegment))
+
+            if isinstance(accumulator, MlodyVectorValue) and is_mapping_seg:
+                # Mapped traversal: apply segment to each element, collect flat
+                collected: list[MlodyValue] = []
+                for elem in accumulator.elements:
+                    elem_result = _traverse_one_step(elem, seg, (), label, policy)
+                    if isinstance(elem_result, MlodyUnresolvedValue):
+                        if policy is TraversalErrorPolicy.RAISE:
+                            return elem_result
+                        # SKIP: omit this element
+                        continue
+                    if isinstance(elem_result, MlodyValue):
+                        collected.append(elem_result)
+                    elif isinstance(elem_result, tuple):
+                        rebuilt, _ = elem_result
+                        collected.append(MlodyValueValue(struct=rebuilt))
+                accumulator = MlodyVectorValue(elements=tuple(collected))
+
+            elif isinstance(accumulator, MlodyVectorValue) and is_expansion_seg:
+                # Vector-of-vectors: apply expansion to each element independently
+                # (not flattened — hierarchical multi-expansion, spec §multiple wildcards)
+                nested: list[MlodyValue] = []
+                for elem in accumulator.elements:
+                    elem_result = _traverse_one_step(elem, seg, (), label, policy)
+                    if isinstance(elem_result, MlodyUnresolvedValue):
+                        if policy is TraversalErrorPolicy.RAISE:
+                            return elem_result
+                        continue
+                    if isinstance(elem_result, MlodyValue):
+                        nested.append(elem_result)
+                    elif isinstance(elem_result, tuple):
+                        rebuilt, _ = elem_result
+                        nested.append(MlodyValueValue(struct=rebuilt))
+                accumulator = MlodyVectorValue(elements=tuple(nested))
+
+            else:
+                # Non-vector accumulator or str segment: single step
+                step = _traverse_one_step(accumulator, seg, (), label, policy)
+                if isinstance(step, MlodyValue):
+                    accumulator = step
+                elif isinstance(step, tuple):
+                    rebuilt, _ = step
+                    accumulator = MlodyValueValue(struct=rebuilt)
+                else:
+                    return MlodyUnresolvedValue(
+                        label=label,
+                        reason=f"unexpected result from _traverse_one_step: {step!r}",
+                    )
+
+        return accumulator
 
 
 # ---------------------------------------------------------------------------
@@ -628,7 +1241,12 @@ def _lookup_entity(
 # ---------------------------------------------------------------------------
 
 
-def resolve_label_to_value(label: "Label", workspace: "Workspace") -> MlodyValue:
+def resolve_label_to_value(
+    label: "Label",
+    workspace: "Workspace",
+    *,
+    traversal_error_policy: TraversalErrorPolicy = TraversalErrorPolicy.RAISE,
+) -> MlodyValue:
     """Resolve a concrete ``Label`` to a typed ``MlodyValue``.
 
     Accepts only non-wildcard labels.  Wildcard expansion is the caller's
@@ -641,6 +1259,13 @@ def resolve_label_to_value(label: "Label", workspace: "Workspace") -> MlodyValue
     3. Entity name present: scan evaluator registry; dispatch to strategy table.
     4. Attribute path present on folder/source: MlodyUnresolvedValue.
     5. Any step fails: MlodyUnresolvedValue with step-specific reason.
+
+    Args:
+        label: The concrete (non-wildcard) label to resolve.
+        workspace: The loaded workspace to resolve against.
+        traversal_error_policy: Controls SKIP/RAISE behaviour for traversal
+            steps that cannot proceed (missing field, out-of-bounds index,
+            type mismatch).  Defaults to RAISE for backward compatibility.
 
     Raises:
         ValueError: if ``label.entity`` is a wildcard (programmer error).
@@ -729,6 +1354,10 @@ def resolve_label_to_value(label: "Label", workspace: "Workspace") -> MlodyValue
 
     attr_path: tuple[str, ...] | None = label.attribute_path
 
+    # TODO(mlody-label-traversal): uniform-level-traversal — when workspace/folder
+    # level traversal is extended, MlodyFolderValue.children could be treated as a
+    # vector here and wildcard/recursive-descent segments applied before the `:` boundary.
+    # See design.md §D-6 for the extension plan.
     if abs_path.is_dir():
         # Folder — entity name on a folder is not supported in v1
         if entity_name is not None:
@@ -809,7 +1438,40 @@ def resolve_label_to_value(label: "Label", workspace: "Workspace") -> MlodyValue
         )
         attr_path_tuple: tuple[str, ...] = attr_path if attr_path is not None else ()
         resolved_path: tuple[str, ...] = entity_field_path + attr_path_tuple
-        return strategy.traverse(struct, resolved_path, label)
+
+        # Pass traversal_error_policy through to the strategy.  ValueTraversalStrategy
+        # acts on it (design D-4); StructTraversalStrategy accepts but ignores it via
+        # **kwargs (pure getattr traversal has no SKIP semantics).
+        result = strategy.traverse(  # type: ignore[call-arg]
+            struct,
+            resolved_path,
+            label,
+            traversal_error_policy=traversal_error_policy,
+        )
+
+        # Apply entity_query (e.g. [1], ["key"], [*]) as a post-step after the
+        # field-path traversal.  The label parser strips brackets and stores the
+        # inner content, so we reconstruct "[query]" for the traversal parser.
+        if label.entity_query is not None and not isinstance(result, MlodyUnresolvedValue):
+            from mlody.core.traversal_parser import (  # noqa: PLC0415
+                TraversalParseError,
+                parse_traversal_expression,
+            )
+            try:
+                eq_expr = parse_traversal_expression(f"[{label.entity_query}]")
+            except TraversalParseError:
+                eq_expr = None
+            if eq_expr is not None and eq_expr.segments:
+                seg = eq_expr.segments[0]
+                step = _traverse_one_step(result, seg, resolved_path, label, traversal_error_policy)
+                if isinstance(step, MlodyUnresolvedValue):
+                    return step
+                if isinstance(step, MlodyValue):
+                    return step
+                if isinstance(step, tuple):
+                    return MlodyValueValue(struct=step[0])
+
+        return result
 
     # Neither a directory nor a .mlody source file
     return MlodyUnresolvedValue(
