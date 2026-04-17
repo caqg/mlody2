@@ -92,6 +92,10 @@ dependencies = [
   "misaki[en]>=0.7.4,<0.7.5",
   # Chatterbox is Python 3.11-only in this repo; keep its heavy TTS stack in
   # requirements/chatterbox.in so the default Python 3.13 @pip hub stays usable.
+
+  # columnar data I/O for Parquet-backed mlody value entities.
+  # See: https://arrow.apache.org/docs/python/
+  "pyarrow",
 ]
 
 # See https://docs.astral.sh/ruff/configuration/

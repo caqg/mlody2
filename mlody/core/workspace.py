@@ -662,7 +662,11 @@ class Workspace:
             else:
                 parts.append(f"//{rel_path}")
             if entity.name:
-                parts.append(f":{entity.name}")
+                field_suffix = (
+                    "." + ".".join(entity.field_path) if entity.field_path else ""
+                )
+                query_suffix = f"[{lbl.entity_query}]" if lbl.entity_query else ""
+                parts.append(f":{entity.name}{field_suffix}{query_suffix}")
             if lbl.attribute_path:
                 parts.append(f"'{'.' .join(lbl.attribute_path)}")
             result.append("".join(parts))

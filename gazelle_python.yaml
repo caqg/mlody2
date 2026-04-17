@@ -242,6 +242,7 @@ manifest:
     prompt_toolkit: prompt_toolkit
     ptpython: ptpython
     py: pytest
+    pyarrow: pyarrow
     pycdlib: pycdlib
     pycparser: pycparser
     pydantic: pydantic

@@ -1,0 +1,29 @@
+load("//build/bzl:python.bzl", "o_py_library", "o_py_test")
+
+o_py_library(
+    name = "deserializer_lib",
+    srcs = ["deserializer.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "@pip//pyarrow",
+    ],
+)
+
+o_py_library(
+    name = "parquet",
+    srcs = ["__init__.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":deserializer_lib",
+    ],
+)
+
+o_py_test(
+    name = "parquet_test",
+    srcs = ["parquet_test.py"],
+    deps = [
+        ":deserializer_lib",
+        ":parquet",
+        "@pip//pyarrow",
+    ],
+)

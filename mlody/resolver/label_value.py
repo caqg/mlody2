@@ -274,6 +274,15 @@ def _posix_location_paths(location: object) -> list[str]:
     return [str(path_value)]
 
 
+def _is_parquet_backed(value: object) -> bool:
+    """Return True when *value* has a parquet representation."""
+    rep = getattr(value, "representation", None)
+    return (
+        getattr(rep, "name", None) == "parquet"
+        or getattr(rep, "type", None) == "parquet"
+    )
+
+
 def _traverse_json_backed_value(
     value: object,
     path: tuple[str, ...],
@@ -969,6 +978,12 @@ class ValueTraversalStrategy:
         if not path:
             return MlodyValueValue(struct=value)
 
+        # Parquet-backed values: delegate entire path to ParquetTraversalStrategy
+        # before any virtual-value or record-aware processing (D-2, task 4.4).
+        location = getattr(value, "location", None)
+        if getattr(location, "type", None) == "parquet":
+            return ParquetTraversalStrategy().traverse(value, path, label)
+
         # Check whether the path contains any non-FieldSegment / non-str segments.
         # If it does, we must use the engine-aware loop (tasks 4.1–4.3).
         def _is_field_only(p: tuple[object, ...]) -> bool:
@@ -1016,9 +1031,12 @@ class ValueTraversalStrategy:
                 )
             return MlodyValueValue(struct=child_value)
 
+        _vt_attrs = getattr(value_type, "attributes", None)
+        _vt_attrs_fields = _vt_attrs.get("fields") if isinstance(_vt_attrs, dict) else None
         is_record = (
             getattr(value_type, "kind", None) == "record"
             or getattr(value_type, "_root_kind", None) == "record"
+            or bool(getattr(value_type, "fields", None) or _vt_attrs_fields)
         )
 
         if len(str_path) == 1 and is_record:
@@ -1194,6 +1212,252 @@ class ValueTraversalStrategy:
                     )
 
         return accumulator
+
+
+# ---------------------------------------------------------------------------
+# ParquetTraversalStrategy  (tasks 4.1–4.5, design D-2, D-4)
+# ---------------------------------------------------------------------------
+
+
+class ParquetTraversalStrategy:
+    """Traversal strategy for ``kind="value"`` entities backed by a Parquet file.
+
+    Delegates all segment dispatch to ``ParquetDeserializer``:
+    - ``IndexSegment(n)``             → ``_read_row(n)``   → ``dict[str, Any]``
+    - ``SliceSegment(start,stop,step)`` → ``_read_slice``  → ``list[dict]``
+    - ``FieldSegment(name)`` on dict  → ``dict[name]``
+    - ``FieldSegment(name)`` on list  → ``[d[name] for d in list]``
+
+    Errors (missing location path, file not found, IndexError, KeyError) are
+    soft-failed as ``MlodyUnresolvedValue`` — never propagated to the caller.
+    """
+
+    def traverse(
+        self,
+        value: object,
+        path: tuple[object, ...],
+        label: "Label",
+        **kwargs: object,
+    ) -> MlodyValue:
+        """Apply *path* to a Parquet-backed value struct.
+
+        Args:
+            value: The root Starlark Struct with ``location.type == "parquet"``.
+            path:  Combined ``(entity.field_path segments) + (attr_path segments)``
+                   tuple of typed ``PathSegment`` objects.
+            label: Originating label (used in unresolved reasons).
+            **kwargs: Accepted for protocol compatibility (e.g.
+                ``traversal_error_policy``); not used by this strategy.
+
+        Returns:
+            ``_RawAttrValue`` wrapping the terminal Python value, or
+            ``MlodyUnresolvedValue`` on any failure.
+        """
+        from mlody.core.parquet import ParquetDeserializer  # noqa: PLC0415
+        from mlody.core.traversal_grammar import (  # noqa: PLC0415
+            FieldSegment,
+            IndexSegment,
+            KeySegment,
+            SliceSegment,
+        )
+
+        import glob as _glob  # noqa: PLC0415
+
+        location = getattr(value, "location", None)
+        path_val: object = getattr(location, "path", None)
+        if path_val is None:
+            _loc_attrs = getattr(location, "attributes", None)
+            if isinstance(_loc_attrs, dict):
+                path_val = _loc_attrs.get("path")
+        if path_val is None:
+            return MlodyUnresolvedValue(
+                label=label,
+                reason=(
+                    "Parquet traversal requires a location with a 'path' attribute; "
+                    f"got location {location!r} (label: {label!r})"
+                ),
+            )
+
+        # Resolve glob patterns and lists to concrete file paths (sorted).
+        if isinstance(path_val, (list, tuple)):
+            file_paths: list[str] = [os.path.expanduser(str(p)) for p in path_val if str(p)]
+        else:
+            _expanded = os.path.expanduser(str(path_val))
+            if _glob.has_magic(_expanded):
+                file_paths = sorted(_glob.glob(_expanded))
+            else:
+                file_paths = [_expanded]
+
+        if not file_paths:
+            return MlodyUnresolvedValue(
+                label=label,
+                reason=f"No parquet files found at {path_val!r} (label: {label!r})",
+            )
+
+        # Apply each path segment left-to-right, feeding each step's output
+        # as the input to the next step (chained traversal, D-4).
+        # current starts as a list[str] of file paths; becomes a dict (row) after
+        # an IndexSegment, or a list[dict] after a SliceSegment.
+        current: object = file_paths
+        for seg in path:
+            if isinstance(current, list) and current and isinstance(current[0], str):
+                # File-paths list: dispatch IndexSegment/SliceSegment to read rows.
+                if isinstance(seg, IndexSegment):
+                    idx = seg.index
+                    # Open deserializers and normalise negative index.
+                    _desers: list[ParquetDeserializer] = []
+                    for fp in current:
+                        try:
+                            _desers.append(ParquetDeserializer(fp))
+                        except FileNotFoundError as exc:
+                            return MlodyUnresolvedValue(
+                                label=label,
+                                reason=f"Parquet file not found: {fp!r} — {exc} (label: {label!r})",
+                            )
+                    if idx < 0:
+                        _total = sum(d.num_rows for d in _desers)
+                        idx = _total + idx
+                    _cumulative = 0
+                    _found: dict | None = None
+                    for _d in _desers:
+                        _n = _d.num_rows
+                        if idx < _cumulative + _n:
+                            try:
+                                _found = _d[idx - _cumulative]
+                            except IndexError as exc:
+                                return MlodyUnresolvedValue(
+                                    label=label,
+                                    reason=f"Parquet index error: {exc} (label: {label!r})",
+                                )
+                            break
+                        _cumulative += _n
+                    if _found is None:
+                        return MlodyUnresolvedValue(
+                            label=label,
+                            reason=(
+                                f"Parquet index {seg.index!r} out of range "
+                                f"(label: {label!r})"
+                            ),
+                        )
+                    current = _found
+                elif isinstance(seg, SliceSegment):
+                    _all_rows: list[dict] = []
+                    for fp in current:
+                        try:
+                            _ds = ParquetDeserializer(fp)
+                            _all_rows.extend(_ds[0 : _ds.num_rows])
+                        except (FileNotFoundError, IndexError) as exc:
+                            return MlodyUnresolvedValue(
+                                label=label,
+                                reason=f"Error reading {fp!r}: {exc} (label: {label!r})",
+                            )
+                    current = _all_rows[seg.start : seg.stop : seg.step]
+                elif isinstance(seg, FieldSegment):
+                    return MlodyUnresolvedValue(
+                        label=label,
+                        reason=(
+                            f"FieldSegment {seg.name!r} applied directly to Parquet files "
+                            f"without a preceding row index (label: {label!r})"
+                        ),
+                    )
+                else:
+                    return MlodyUnresolvedValue(
+                        label=label,
+                        reason=(
+                            f"unsupported path segment {type(seg).__name__!r} "
+                            f"on Parquet file list (label: {label!r})"
+                        ),
+                    )
+            elif isinstance(current, ParquetDeserializer):
+                # Single-file deserializer (legacy / direct use).
+                if isinstance(seg, IndexSegment):
+                    try:
+                        current = current[seg.index]
+                    except IndexError as exc:
+                        return MlodyUnresolvedValue(
+                            label=label,
+                            reason=f"Parquet index error: {exc} (label: {label!r})",
+                        )
+                elif isinstance(seg, SliceSegment):
+                    current = current[seg.start : seg.stop : seg.step]
+                elif isinstance(seg, FieldSegment):
+                    return MlodyUnresolvedValue(
+                        label=label,
+                        reason=(
+                            f"FieldSegment {seg.name!r} applied directly to Parquet file "
+                            f"without a preceding row index (label: {label!r})"
+                        ),
+                    )
+                else:
+                    return MlodyUnresolvedValue(
+                        label=label,
+                        reason=(
+                            f"unsupported path segment {type(seg).__name__!r} "
+                            f"on Parquet deserializer (label: {label!r})"
+                        ),
+                    )
+            elif isinstance(current, dict):
+                if isinstance(seg, (FieldSegment, KeySegment)):
+                    key = seg.name if isinstance(seg, FieldSegment) else seg.key
+                    if key not in current:
+                        available = list(current.keys())
+                        return MlodyUnresolvedValue(
+                            label=label,
+                            reason=(
+                                f"column {key!r} not found in row; "
+                                f"available columns: {available} (label: {label!r})"
+                            ),
+                        )
+                    current = current[key]
+                else:
+                    return MlodyUnresolvedValue(
+                        label=label,
+                        reason=(
+                            f"unsupported path segment {type(seg).__name__!r} "
+                            f"on row dict (label: {label!r})"
+                        ),
+                    )
+            elif isinstance(current, list):
+                if isinstance(seg, FieldSegment):
+                    # Mapped traversal: extract the named field from each row dict.
+                    try:
+                        current = [row[seg.name] for row in current]  # type: ignore[index]
+                    except KeyError:
+                        return MlodyUnresolvedValue(
+                            label=label,
+                            reason=(
+                                f"column {seg.name!r} not found in one or more rows "
+                                f"(label: {label!r})"
+                            ),
+                        )
+                elif isinstance(seg, IndexSegment):
+                    try:
+                        current = current[seg.index]
+                    except IndexError as exc:
+                        return MlodyUnresolvedValue(
+                            label=label,
+                            reason=f"index error on slice result: {exc} (label: {label!r})",
+                        )
+                else:
+                    return MlodyUnresolvedValue(
+                        label=label,
+                        reason=(
+                            f"unsupported path segment {type(seg).__name__!r} "
+                            f"on list-of-rows (label: {label!r})"
+                        ),
+                    )
+            else:
+                return MlodyUnresolvedValue(
+                    label=label,
+                    reason=(
+                        f"cannot apply path segment {type(seg).__name__!r} "
+                        f"to value of type {type(current).__name__!r} (label: {label!r})"
+                    ),
+                )
+
+        # Wrap terminal result in _RawAttrValue (spec: strategy returns _RawAttrValue).
+        # If path was empty we wrap the deserializer itself (unusual but valid).
+        return _RawAttrValue(value=current, label=label)
 
 
 # ---------------------------------------------------------------------------
@@ -1439,15 +1703,32 @@ def resolve_label_to_value(
         attr_path_tuple: tuple[str, ...] = attr_path if attr_path is not None else ()
         resolved_path: tuple[str, ...] = entity_field_path + attr_path_tuple
 
-        # Pass traversal_error_policy through to the strategy.  ValueTraversalStrategy
-        # acts on it (design D-4); StructTraversalStrategy accepts but ignores it via
-        # **kwargs (pure getattr traversal has no SKIP semantics).
-        result = strategy.traverse(  # type: ignore[call-arg]
-            struct,
-            resolved_path,
-            label,
-            traversal_error_policy=traversal_error_policy,
-        )
+        # For Parquet-backed entities, convert plain string segments to typed
+        # FieldSegment instances so that ParquetTraversalStrategy can dispatch
+        # correctly (task 4.5, spec §PathSegment types forwarded).
+        location_of_struct = getattr(struct, "location", None)
+        if getattr(location_of_struct, "type", None) == "parquet":
+            from mlody.core.traversal_grammar import FieldSegment as _FS  # noqa: PLC0415
+
+            parquet_path: tuple[object, ...] = tuple(
+                _FS(name=s) for s in resolved_path
+            )
+            result: MlodyValue = strategy.traverse(  # type: ignore[call-arg]
+                struct,
+                parquet_path,
+                label,
+                traversal_error_policy=traversal_error_policy,
+            )
+        else:
+            # Pass traversal_error_policy through to the strategy.  ValueTraversalStrategy
+            # acts on it (design D-4); StructTraversalStrategy accepts but ignores it via
+            # **kwargs (pure getattr traversal has no SKIP semantics).
+            result = strategy.traverse(  # type: ignore[call-arg]
+                struct,
+                resolved_path,
+                label,
+                traversal_error_policy=traversal_error_policy,
+            )
 
         # Apply entity_query (e.g. [1], ["key"], [*]) as a post-step after the
         # field-path traversal.  The label parser strips brackets and stores the
@@ -1463,6 +1744,40 @@ def resolve_label_to_value(
                 eq_expr = None
             if eq_expr is not None and eq_expr.segments:
                 seg = eq_expr.segments[0]
+                # For Parquet-backed entities the entity_query bracket expression
+                # (e.g. [0]) must be forwarded through ParquetTraversalStrategy
+                # rather than the generic _traverse_one_step, because the strategy
+                # carries the file path needed to read from disk.
+                # Prefer checking the traversal RESULT for parquet backing — the
+                # root struct may have a posix location while a nested field is
+                # the actual parquet-backed vector (e.g. celebA-dataset.valid[1]).
+                _result_struct: object = None
+                if isinstance(result, MlodyValueValue):
+                    _result_struct = result.struct
+                if _result_struct is not None and _is_parquet_backed(_result_struct):
+                    from mlody.core.traversal_grammar import PathSegment  # noqa: PLC0415
+                    all_pq_segs = tuple(
+                        s for s in eq_expr.segments if isinstance(s, PathSegment)
+                    )
+                    if all_pq_segs:
+                        pq_result = ParquetTraversalStrategy().traverse(
+                            _result_struct,
+                            all_pq_segs,
+                            label,
+                        )
+                        return pq_result
+                elif getattr(location_of_struct, "type", None) == "parquet":
+                    from mlody.core.traversal_grammar import PathSegment  # noqa: PLC0415
+                    all_pq_segs = tuple(
+                        s for s in eq_expr.segments if isinstance(s, PathSegment)
+                    )
+                    if all_pq_segs:
+                        pq_result = ParquetTraversalStrategy().traverse(
+                            struct,
+                            all_pq_segs,
+                            label,
+                        )
+                        return pq_result
                 step = _traverse_one_step(result, seg, resolved_path, label, traversal_error_policy)
                 if isinstance(step, MlodyUnresolvedValue):
                     return step

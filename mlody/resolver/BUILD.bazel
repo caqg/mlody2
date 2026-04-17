@@ -15,6 +15,7 @@ o_py_library(
         "//mlody/core:core_lib",
         "//mlody/core:location_composition_lib",
         "//mlody/core:traversal_grammar",  # keep — label_value.py imports PathSegment types for engine dispatch
+        "//mlody/core/parquet:parquet",  # keep — ParquetTraversalStrategy lazy-imports ParquetDeserializer
         "//mlody/db:db_lib",  # keep — resolver.py imports open_db, write_evaluation, compute_local_diff_sha
     ],
 )
@@ -67,6 +68,19 @@ o_py_test(
     deps = [
         ":resolver_lib",
         "//common/python/starlarkish",  # keep — starlarkish evaluator used by Workspace
+        "//mlody/core/parquet:parquet",  # keep — Parquet integration tests create real Parquet files
+        "@pip//pyarrow",  # keep — integration tests write Parquet fixtures directly
         "@pip//pyfakefs",  # keep — pyfakefs provides the `fs` fixture via pytest plugin
+    ],
+)
+
+o_py_test(
+    name = "parquet_integration_test",
+    srcs = ["parquet_integration_test.py"],
+    deps = [
+        ":resolver_lib",
+        "//common/python/starlarkish",  # keep — starlarkish evaluator + Struct used in tests
+        "//mlody/core/parquet:parquet",  # keep — ParquetTraversalStrategy imported directly
+        "@pip//pyarrow",  # keep — tests write real Parquet files via pyarrow
     ],
 )
