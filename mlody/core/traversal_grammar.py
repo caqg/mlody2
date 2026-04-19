@@ -26,12 +26,15 @@ TRAVERSAL_GRAMMAR_EBNF: str = """\
 traversal_expr  ::= segment*
 segment         ::= field_seg | bracket_seg | recursive_seg
 field_seg       ::= "." IDENT
-bracket_seg     ::= "[" ( slice_seg | INT | STR | "*" ) "]"
+bracket_seg     ::= "[" ( sql_seg | slice_seg | INT | STR | "*" ) "]"
+sql_seg         ::= "@sql" WS* SQL_BODY
 slice_seg       ::= INT? ":" INT? ( ":" INT? )?
 recursive_seg   ::= ".."
 IDENT           ::= [a-zA-Z_][a-zA-Z0-9_]*
 INT             ::= "-"? [0-9]+
 STR             ::= '"' [^"]* '"'
+SQL_BODY        ::= any characters (nested "[]" balanced) up to the closing "]"
+WS              ::= " " | "\\t"
 """
 
 
@@ -120,6 +123,21 @@ class RecursiveDescentSegment(PathSegment):
 
     def __str__(self) -> str:
         return ".."
+
+
+@dataclass(frozen=True)
+class SqlSegment(PathSegment):
+    """SQL query segment: ``[@sql <query>]``.
+
+    The ``query`` field holds the SQL string as supplied by the caller (after
+    stripping surrounding whitespace).  The ``@sql`` keyword itself is not
+    included.  Nested square brackets inside the SQL body are preserved.
+    """
+
+    query: str
+
+    def __str__(self) -> str:
+        return f"[@sql {self.query}]"
 
 
 @dataclass(frozen=True)

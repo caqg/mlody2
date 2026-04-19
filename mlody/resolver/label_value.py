@@ -1362,6 +1362,17 @@ class ParquetTraversalStrategy:
                         ),
                     )
                 else:
+                    from mlody.core.traversal_grammar import SqlSegment  # noqa: PLC0415
+                    if isinstance(seg, SqlSegment):
+                        from mlody.core.sql import MlodyQueryError, mlody_query  # noqa: PLC0415
+                        try:
+                            table = mlody_query(paths=current, query=seg.query)
+                        except MlodyQueryError as exc:
+                            return MlodyUnresolvedValue(
+                                label=label,
+                                reason=f"SQL query failed: {exc} (label: {label!r})",
+                            )
+                        return _RawAttrValue(value=table, label=label)
                     return MlodyUnresolvedValue(
                         label=label,
                         reason=(

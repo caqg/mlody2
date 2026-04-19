@@ -16,6 +16,7 @@ o_py_library(
         "//mlody/core:location_composition_lib",
         "//mlody/core:traversal_grammar",  # keep — label_value.py imports PathSegment types for engine dispatch
         "//mlody/core/parquet:parquet",  # keep — ParquetTraversalStrategy lazy-imports ParquetDeserializer
+        "//mlody/core/sql:sql",  # keep — ParquetTraversalStrategy lazy-imports mlody_query for SqlSegment dispatch
         "//mlody/db:db_lib",  # keep — resolver.py imports open_db, write_evaluation, compute_local_diff_sha
     ],
 )

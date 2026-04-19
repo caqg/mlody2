@@ -1,0 +1,31 @@
+load("//build/bzl:python.bzl", "o_py_library", "o_py_test")
+
+o_py_library(
+    name = "sql_query_lib",
+    srcs = ["sql_query.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "@pip//duckdb",
+        "@pip//pyarrow",
+        "@pip//sqlglot",
+    ],
+)
+
+o_py_library(
+    name = "sql",
+    srcs = ["__init__.py"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":sql_query_lib",
+    ],
+)
+
+o_py_test(
+    name = "sql_test",
+    srcs = ["sql_test.py"],
+    deps = [
+        ":sql",
+        ":sql_query_lib",
+        "@pip//pyarrow",
+    ],
+)

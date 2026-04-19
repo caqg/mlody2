@@ -96,6 +96,14 @@ dependencies = [
   # columnar data I/O for Parquet-backed mlody value entities.
   # See: https://arrow.apache.org/docs/python/
   "pyarrow",
+
+  # in-memory analytical query engine for Parquet-backed mlody SQL queries.
+  # See: https://duckdb.org/docs/api/python/overview
+  "duckdb",
+
+  # SQL parser and AST library with DuckDB dialect support for SELECT injection.
+  # See: https://github.com/tobymao/sqlglot
+  "sqlglot",
 ]
 
 # See https://docs.astral.sh/ruff/configuration/

@@ -155,6 +155,27 @@ def _is_primitive(value: object) -> bool:
 
 
 def _format_value(value: object) -> str:
+    try:
+        import pyarrow as pa  # noqa: PLC0415
+
+        if isinstance(value, pa.Table):
+            rows = value.num_rows
+            cols = value.num_columns
+            header = f"pyarrow.Table  {rows} rows × {cols} columns"
+            # Truncate to first 50 rows so the terminal doesn't flood.
+            preview = value.slice(0, 50)
+            col_names = preview.column_names
+            # Build rows as dicts and render as aligned columns.
+            data_rows = preview.to_pydict()
+            lines: list[str] = [", ".join(col_names)]
+            for i in range(preview.num_rows):
+                lines.append(", ".join(str(data_rows[c][i]) for c in col_names))
+            body = "\n".join(lines)
+            if rows > 50:
+                body += f"\n… ({rows - 50} more rows not shown)"
+            return f"{header}\n{body}"
+    except ImportError:
+        pass
     if _is_primitive(value):
         return str(value)
     return pretty_repr(value)

@@ -33,6 +33,7 @@ from mlody.core.traversal_grammar import (
     PathSegment,
     RecursiveDescentSegment,
     SliceSegment,
+    SqlSegment,
     TraversalParseError,
     WildcardSegment,
 )
@@ -82,6 +83,10 @@ class _Parser:
 
         ch = self._peek()
 
+        # SQL query segment: [@sql <query>]
+        if ch == "@":
+            return self._parse_sql_seg(start)
+
         # Wildcard: [*]
         if ch == "*":
             self._pos += 1
@@ -114,6 +119,53 @@ class _Parser:
                 "expected an integer, a quoted string (\"...\"), '*', or a slice (e.g. '1:4')"
             ),
         )
+
+    def _parse_sql_seg(self, bracket_start: int) -> SqlSegment:
+        """Parse ``[@sql <query>]`` — SQL query segment.
+
+        Cursor is positioned immediately after the opening ``[``, pointing at
+        ``@``.  Consumes ``@sql``, optional whitespace, then the SQL body up to
+        the matching ``]`` (nested ``[]`` are balanced so SQL array subscripts
+        work).  Returns a ``SqlSegment`` with ``query`` stripped of surrounding
+        whitespace.
+        """
+        keyword = "@sql"
+        end = self._pos + len(keyword)
+        if self._expr[self._pos : end].lower() != keyword:
+            self._fail_at(
+                self._pos,
+                f"expected '{keyword}' after '['; "
+                f"got {self._expr[self._pos:end]!r}",
+            )
+        self._pos = end  # consume "@sql"
+
+        # Skip optional whitespace between @sql and the query body.
+        while not self._at_end() and self._peek() in (" ", "\t"):
+            self._pos += 1
+
+        # Consume SQL body, tracking bracket depth so nested [] are handled.
+        # depth=1 because we are already inside the outer "[".
+        depth = 1
+        query_start = self._pos
+        while not self._at_end():
+            ch = self._peek()
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    break
+            self._pos += 1
+
+        if self._at_end():
+            self._fail_at(
+                bracket_start,
+                "unterminated '[@sql' — missing closing ']'",
+            )
+
+        query = self._expr[query_start : self._pos].strip()
+        self._pos += 1  # consume closing "]"
+        return SqlSegment(query=query)
 
     def _parse_quoted_string(self, bracket_start: int) -> str:
         """Parse a double-quoted string, consuming both delimiters.
