@@ -8,6 +8,7 @@ Public API:
     ParquetDeserializer(path)   — construct (validates path, defers open)
     deserializer[n]             — read row n → dict[str, Any]
     deserializer[start:stop:step] → list[dict[str, Any]]
+    read_file_as_rows(path)     — read all rows in one columnar pass (fast)
     register_parquet_handler    — register a custom handler for a pyarrow type
     OPAQUE_SENTINEL             — the sentinel returned for unhandled opaque types
     _clear_handlers             — test helper: reset the global registry
@@ -308,3 +309,67 @@ class ParquetDeserializer:
             String of the form ``ParquetDeserializer('<path>', num_rows=N)``.
         """
         return f"ParquetDeserializer({str(self._path)!r}, num_rows={self.num_rows})"
+
+
+# ---------------------------------------------------------------------------
+# Fast whole-file reader (columnar pass, no per-row overhead)
+# ---------------------------------------------------------------------------
+
+
+def read_file_as_rows(path: Path | str) -> list[dict[str, Any]]:
+    """Read all rows from a Parquet file in a single columnar pass.
+
+    Reads every column into a Python list at once using PyArrow's vectorised
+    ``to_pylist()``, applies the global handler registry and opaque-type
+    sentinel per column, then transposes the column arrays into row dicts.
+
+    This is O(rows * cols) in memory but performs a single I/O read of the
+    file, making it orders of magnitude faster than iterating via
+    ``ParquetDeserializer[i]`` for large slices.
+
+    Args:
+        path: Local filesystem path to a Parquet file.
+
+    Returns:
+        ``list[dict[str, Any]]`` — one dict per row, column name → value.
+
+    Raises:
+        FileNotFoundError: if the path does not exist.
+    """
+    resolved = Path(path).resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"Parquet file not found: {path!r}")
+
+    pf = pq.ParquetFile(str(resolved))
+    table = pf.read()
+    schema = table.schema
+
+    col_arrays: dict[str, list] = {}
+    for field in schema:
+        col = table.column(field.name)
+        field_type = field.type
+
+        # Handler registry (same lookup as ParquetDeserializer._convert_value)
+        handled = False
+        for reg_type, handler in _HANDLER_REGISTRY:
+            if field_type == reg_type:
+                col_arrays[field.name] = [handler(v, field) for v in col.to_pylist()]
+                handled = True
+                break
+        if handled:
+            continue
+
+        # Opaque structured types → sentinel column
+        if (
+            pa.types.is_struct(field_type)
+            or pa.types.is_map(field_type)
+            or pa.types.is_large_binary(field_type)
+            or pa.types.is_binary(field_type)
+        ):
+            col_arrays[field.name] = [OPAQUE_SENTINEL] * len(col)
+        else:
+            col_arrays[field.name] = col.to_pylist()
+
+    keys = list(col_arrays.keys())
+    n = table.num_rows
+    return [{k: col_arrays[k][i] for k in keys} for i in range(n)]

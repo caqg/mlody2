@@ -1341,12 +1341,13 @@ class ParquetTraversalStrategy:
                         )
                     current = _found
                 elif isinstance(seg, SliceSegment):
+                    from mlody.core.parquet import read_file_as_rows  # noqa: PLC0415
+
                     _all_rows: list[dict] = []
                     for fp in current:
                         try:
-                            _ds = ParquetDeserializer(fp)
-                            _all_rows.extend(_ds[0 : _ds.num_rows])
-                        except (FileNotFoundError, IndexError) as exc:
+                            _all_rows.extend(read_file_as_rows(fp))
+                        except Exception as exc:
                             return MlodyUnresolvedValue(
                                 label=label,
                                 reason=f"Error reading {fp!r}: {exc} (label: {label!r})",
@@ -1418,15 +1419,16 @@ class ParquetTraversalStrategy:
                         ),
                     )
             elif isinstance(current, list):
-                if isinstance(seg, FieldSegment):
-                    # Mapped traversal: extract the named field from each row dict.
+                if isinstance(seg, (FieldSegment, KeySegment)):
+                    # Mapped traversal: extract the named key from each row dict.
+                    _key = seg.name if isinstance(seg, FieldSegment) else seg.key
                     try:
-                        current = [row[seg.name] for row in current]  # type: ignore[index]
+                        current = [row[_key] for row in current]  # type: ignore[index]
                     except KeyError:
                         return MlodyUnresolvedValue(
                             label=label,
                             reason=(
-                                f"column {seg.name!r} not found in one or more rows "
+                                f"column {_key!r} not found in one or more rows "
                                 f"(label: {label!r})"
                             ),
                         )

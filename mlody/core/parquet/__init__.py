@@ -35,5 +35,6 @@ from mlody.core.parquet.deserializer import (
     OPAQUE_SENTINEL as OPAQUE_SENTINEL,
     ParquetDeserializer as ParquetDeserializer,
     _clear_handlers as _clear_handlers,
+    read_file_as_rows as read_file_as_rows,
     register_parquet_handler as register_parquet_handler,
 )
