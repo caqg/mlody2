@@ -85,6 +85,9 @@ dependencies = [
   # realtime landmark inference for face and full-body pose.
   # See: https://ai.google.dev/edge/mediapipe
   "mediapipe",
+  # Ultralytics YOLO runtime for YOLOv26 object detection from webcam frames.
+  # See: https://github.com/ultralytics/ultralytics
+  "ultralytics",
   # Kokoro text-to-speech inference pipeline.
   # See: https://pypi.org/project/kokoro/
   # Keep Kokoro and Misaki pinned to the latest pair that supports Python 3.13.

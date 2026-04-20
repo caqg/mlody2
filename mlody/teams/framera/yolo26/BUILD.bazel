@@ -1,0 +1,43 @@
+load("//build/bzl:python.bzl", "o_py_binary", "o_py_library", "o_py_test")
+
+o_py_library(
+    name = "yolo26_lib",
+    srcs = [
+        "__init__.py",
+        "runtime.py",
+        "schema.py",
+        "yolo26_detector.py",
+    ],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "@pip//click",
+        "@pip//opencv_python",
+        "@pip//torch",
+        "@pip//ultralytics",
+    ],
+)
+
+o_py_binary(
+    name = "framera_yolo26",
+    srcs = ["yolo26-detect.py"],
+    main = "yolo26-detect.py",
+    package_collisions = "warning",
+    visibility = ["//visibility:public"],
+    deps = [":yolo26_lib"],
+)
+
+o_py_test(
+    name = "framera_yolo26_test",
+    package_collisions = "warning",
+    srcs = [
+        "runtime_test.py",
+        "schema_test.py",
+        "yolo26_detector_test.py",
+    ],
+    deps = [
+        ":yolo26_lib",
+        "@pip//click",
+    ],
+    visibility = ["//visibility:public"],
+)
+

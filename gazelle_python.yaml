@@ -152,6 +152,7 @@ manifest:
     PyQt6.Qt6.qml.QtWebSockets.libqmlwebsocketsplugin: pyqt6_qt6
     PyQt6.sip: pyqt6_sip
     absl: absl_py
+    adbc_driver_duckdb: duckdb
     annotated_doc: annotated_doc
     annotated_types: annotated_types
     anyio: anyio
@@ -173,6 +174,8 @@ manifest:
     contourpy: contourpy
     copier: copier
     csvw: csvw
+    cuda.bindings: cuda_bindings
+    cuda.pathfinder: cuda_pathfinder
     curated_tokenizers: curated_tokenizers
     curated_transformers: curated_transformers
     cv2: opencv_python
@@ -183,6 +186,7 @@ manifest:
     dlinfo: dlinfo
     docopt: docopt
     docs.source.conf: phonemizer
+    duckdb: duckdb
     dunamai: dunamai
     filelock: filelock
     flatbuffers: flatbuffers
@@ -227,7 +231,10 @@ manifest:
     networkx: networkx
     num2words: num2words
     numpy: numpy
-    nvidia: nvidia_nvtx_cu12
+    nvidia.cu13.lib.libcheckpoint: nvidia_cuda_cupti
+    nvidia.cu13.lib.libnvperf_host: nvidia_cuda_cupti
+    nvidia.cu13.lib.libnvperf_target: nvidia_cuda_cupti
+    nvidia.cu13.lib.libpcsamplingutil: nvidia_cuda_cupti
     opencv_contrib_python.libs.libopenblas-r0-f650aae0: opencv_contrib_python
     opencv_python.libs.libopenblas-r0-f650aae0: opencv_python
     packaging: packaging
@@ -238,8 +245,10 @@ manifest:
     platformdirs: platformdirs
     pluggy: pluggy
     plumbum: plumbum
+    polars: polars
     preshed: preshed
     prompt_toolkit: prompt_toolkit
+    psutil: psutil
     ptpython: ptpython
     py: pytest
     pyarrow: pyarrow
@@ -276,14 +285,18 @@ manifest:
     spacy_curated_transformers: spacy_curated_transformers
     spacy_legacy: spacy_legacy
     spacy_loggers: spacy_loggers
+    sqlglot: sqlglot
     srsly: srsly
     sympy: sympy
     termcolor: termcolor
     test: phonemizer
+    tests: ultralytics
     thinc: thinc
+    thop: ultralytics_thop
     tokenizers: tokenizers
     torch: torch
     torchgen: torch
+    torchvision: torchvision
     tqdm: tqdm
     transformers: transformers
     tree_sitter: tree_sitter
@@ -292,6 +305,7 @@ manifest:
     typer: typer
     typing_extensions: typing_extensions
     typing_inspection: typing_inspection
+    ultralytics: ultralytics
     uritemplate: uritemplate
     urllib3: urllib3
     uuid_utils: uuid_utils
